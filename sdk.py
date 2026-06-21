@@ -68,7 +68,6 @@ class _State:
     flagged: bool = False
     notes: List[str] = field(default_factory=list)
     peer_verdict: Optional[dict] = None
-    peer_judge_running: bool = False
     budget_usd: Optional[float] = None   # hard cap; None = no cap
     start_time: float = field(default_factory=time.time)
 
@@ -161,7 +160,6 @@ class Watcher:
                  cost_threshold:   float = COST_STALL_THRESHOLD_USD,
                  time_threshold:   float = EXPECTED_TASK_SECONDS,
                  task_description: str   = "",
-                 peer_judge:       bool  = False,
                  on_alert=None):
         self.states: Dict[str, _State] = {}
         self.alerts: List[Alert] = []
@@ -173,7 +171,6 @@ class Watcher:
         self._cost_threshold   = cost_threshold
         self._time_threshold   = time_threshold
         self._task_description = task_description
-        self._peer_judge       = peer_judge and bool(os.environ.get("ANTHROPIC_API_KEY"))
         self._on_alert         = on_alert or self._print_alert
 
     # ── public control API ─────────────────────────────────────────────────────
@@ -344,17 +341,7 @@ class Watcher:
             snap_cost     = state.cumulative_cost
             snap_progress = state.progress_score
             snap_elapsed  = state.elapsed
-            snap_rate     = state.cost_rate_per_min
-            snap_proj     = state.projected_cost_1h
             snap_budget   = state.budget_usd
-            run_peer      = (
-                self._peer_judge and output
-                and not state.peer_verdict
-                and not state.peer_judge_running
-                and should_eval
-            )
-            if run_peer:
-                state.peer_judge_running = True
 
         self._dirty.set()
 
@@ -364,13 +351,6 @@ class Watcher:
         if should_eval:
             self._evaluate(agent_id, snap_retries, snap_cost,
                            snap_progress, snap_elapsed)
-
-        if run_peer:
-            threading.Thread(
-                target=self._run_peer_judge,
-                args=(agent_id, output, snap_progress, snap_cost),
-                daemon=True,
-            ).start()
 
     def _evaluate(self, agent_id, retries, cost, progress, elapsed):
         with self._lock:
@@ -437,35 +417,6 @@ class Watcher:
             self.alerts.append(alert)
         self._dirty.set()
         self._on_alert(alert)
-
-    def _run_peer_judge(self, agent_id, output, progress, cost):
-        import peer_judge as pj
-        verdict = pj.judge(
-            agent_id=agent_id,
-            task_description=self._task_description,
-            recent_output=output,
-            progress_score=progress,
-            cumulative_cost=cost,
-        )
-        with self._lock:
-            state = self.states.get(agent_id)
-            if state:
-                state.peer_verdict = verdict
-                state.peer_judge_running = False
-                if not verdict.get("on_task", True) and verdict.get("confidence") == "high":
-                    state.flagged = True
-
-        if not verdict.get("on_task", True) and verdict.get("confidence") == "high":
-            entry = {
-                "agent_id":       agent_id,
-                "reason":         verdict.get("reason", "off-task output detected"),
-                "recommendation": verdict.get("recommendation", "Review agent output."),
-                "time":           datetime.datetime.now().strftime("%H:%M:%S"),
-            }
-            with self._lock:
-                self.peer_alerts.append(entry)
-            self._dirty.set()
-            print(f"\n[peer judge] {agent_id}: {verdict.get('reason')}")
 
     def _print_alert(self, alert: Alert):
         print(f"\n{'='*60}")

@@ -108,7 +108,6 @@ def main():
 
     watcher = Watcher(
         task_description="Process a dataset and produce a structured summary report.",
-        peer_judge=True,
     )
     watcher.start_dashboard(port=5050)
 
