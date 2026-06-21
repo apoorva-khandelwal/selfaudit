@@ -14,7 +14,7 @@ import time
 
 _SNAPSHOT_KEY = "selfaudit:snapshot"
 _CHANNEL      = "selfaudit:updates"
-_SNAPSHOT_TTL = 3600  # 1 hour
+_SNAPSHOT_TTL = 86400  # 24 hours
 
 
 def _client():
