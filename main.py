@@ -94,8 +94,8 @@ def build_agent_plan(n: int):
 
 def main():
     parser = argparse.ArgumentParser(description="SelfAudit demo runner")
-    parser.add_argument("--agents",     type=int, default=4,
-                        help="number of agents to simulate (default: 4)")
+    parser.add_argument("--agents",     type=int, default=5,
+                        help="number of agents to simulate (default: 5)")
     parser.add_argument("--no-phoenix", action="store_true",
                         help="skip Phoenix trace UI")
     args = parser.parse_args()
