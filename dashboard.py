@@ -872,6 +872,16 @@ def api_undo_state():
         label=_undo_stack[-1][0] if _undo_stack else None,
     )
 
+@app.route("/api/debug", methods=["GET"])
+def api_debug():
+    if not _watcher:
+        return jsonify(error="no watcher")
+    return jsonify(
+        alerts_count=len(_watcher.alerts),
+        alerts=[{"id": a.id, "agent_id": a.agent_id, "reason": a.reason, "dismissed": a.dismissed} for a in _watcher.alerts],
+        alerted_states=[k for k, v in _watcher.states.items() if v.alerted],
+    )
+
 @app.route("/api/pause", methods=["POST"])
 def api_pause():
     aid = request.json["agent_id"]

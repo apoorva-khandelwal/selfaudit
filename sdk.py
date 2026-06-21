@@ -528,10 +528,15 @@ class Watcher:
             print(f"\n[watcher] {agent_id} flagged for review — {'; '.join(ambiguous_reasons)}")
 
     def _fire_alert(self, agent_id, reason, cost, retries, progress):
-        with self._lock:
-            model = self.states[agent_id].model if agent_id in self.states else None
-        situation = "zero_progress" if progress == 0 else "stuck_subtask"
-        rec = _build_recommendation(agent_id, model, cost, retries, progress, situation)
+        try:
+            with self._lock:
+                model = self.states[agent_id].model if agent_id in self.states else None
+            situation = "zero_progress" if progress == 0 else "stuck_subtask"
+            rec = _build_recommendation(agent_id, model, cost, retries, progress, situation)
+        except Exception as e:
+            print(f"[watcher] _fire_alert error building rec: {e}")
+            rec = {"headline": "", "steps": [], "alternatives": []}
+            model = None
 
         # pull similar past alerts from Redis memory (silent if unavailable)
         try:
