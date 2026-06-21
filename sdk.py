@@ -284,12 +284,38 @@ class Watcher:
             )
         self._dirty.set()
 
+    def edit_note(self, agent_id: str, index: int, new_text: str) -> bool:
+        with self._lock:
+            state = self.states.get(agent_id)
+            if not state or index < 0 or index >= len(state.notes):
+                return False
+            # preserve timestamp prefix, replace the text after it
+            old = state.notes[index]
+            prefix = old[:old.index("] ") + 2] if "] " in old else ""
+            state.notes[index] = prefix + new_text
+        self._dirty.set()
+        return True
+
+    def delete_note(self, agent_id: str, index: int) -> bool:
+        with self._lock:
+            state = self.states.get(agent_id)
+            if not state or index < 0 or index >= len(state.notes):
+                return False
+            state.notes.pop(index)
+        self._dirty.set()
+        return True
+
     def dismiss_alert(self, alert_id: str):
         with self._lock:
             for a in self.alerts:
                 if a.id == alert_id:
                     a.dismissed = True
                     break
+        self._dirty.set()
+
+    def delete_alert(self, alert_id: str):
+        with self._lock:
+            self.alerts = [a for a in self.alerts if a.id != alert_id]
         self._dirty.set()
 
     def set_budget(self, agent_id: str, budget_usd: float) -> bool:

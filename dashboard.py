@@ -162,7 +162,11 @@ HTML = """
 
     /* notes list */
     .notes-list { margin-top:8px; display:flex; flex-direction:column; gap:3px; }
-    .note-item { font-size:10px; color:var(--muted); padding:3px 0; border-bottom:1px solid #1a1a1a; }
+    .note-item { font-size:10px; color:var(--muted); padding:3px 0; border-bottom:1px solid #1a1a1a; display:flex; align-items:center; gap:6px; }
+    .note-text { flex:1; }
+    .note-edit-input { flex:1; background:var(--surface2); border:1px solid var(--border); color:var(--text); font-family:inherit; font-size:10px; padding:2px 6px; border-radius:3px; }
+    .note-btn { background:none; border:none; cursor:pointer; font-size:9px; color:var(--muted); padding:0 2px; }
+    .note-btn:hover { color:var(--text); }
 
     .callout { margin-top:8px; padding:7px 10px; border-radius:4px; font-size:11px; line-height:1.5; border-left:3px solid; }
     .callout.red    { border-color:var(--red);    background:rgba(255,59,48,.07);  color:#ff7a72; }
@@ -339,7 +343,11 @@ HTML = """
       </div>`).join('') || '<div class="action-row">no actions yet</div>';
 
     const notesHTML = (a.notes||[]).map(n =>
-      `<div class="note-item">${n}</div>`).join('');
+      `<div class="note-item" id="note-item-${a.agent_id.replace(/[^a-z0-9]/gi,'_')}-${n.i}">
+        <span class="note-text">${n.text}</span>
+        <button class="note-btn" title="Edit" onclick="startEditNote('${a.agent_id}',${n.i},this)">✎</button>
+        <button class="note-btn" title="Delete" onclick="deleteNote('${a.agent_id}',${n.i})">✕</button>
+      </div>`).join('');
 
     const modelTag      = a.model ? `<span style="font-size:9px;color:var(--muted);margin-left:4px">[${a.model}]</span>` : '';
     const alertCallout  = a.alert_reason  ? `<div class="callout red">${a.alert_reason}</div>` : '';
@@ -407,7 +415,10 @@ HTML = """
         </div>
         <div class="alert-reason">${a.reason}</div>
         <div class="alert-rec">${renderRec(a.recommendation)}</div>
-        ${!a.dismissed && a.id ? `<button class="btn-dismiss" onclick="dismissAlert('${a.id}')">Dismiss</button>` : ''}
+        ${a.id ? `
+          <button class="btn-dismiss" onclick="dismissAlert('${a.id}')" style="right:44px">${a.dismissed?'Dismissed':'Dismiss'}</button>
+          <button class="btn-dismiss" onclick="deleteAlert('${a.id}')" style="color:var(--red);border-color:#3a1a1a">Delete</button>
+        ` : ''}
       </div>`).join('');
   }
 
@@ -470,6 +481,58 @@ HTML = """
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({alert_id: alertId})
+    });
+  }
+
+  function deleteAlert(alertId) {
+    fetch('/api/delete_alert', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({alert_id: alertId})
+    });
+  }
+
+  function startEditNote(agentId, index, btn) {
+    const key = agentId.replace(/[^a-z0-9]/gi,'_');
+    const item = document.getElementById(`note-item-${key}-${index}`);
+    const span = item.querySelector('.note-text');
+    const current = span.textContent;
+    item.innerHTML = `
+      <input class="note-edit-input" value="${current.replace(/"/g,'&quot;')}" id="edit-input-${key}-${index}">
+      <button class="note-btn" onclick="saveEditNote('${agentId}',${index})">✓</button>
+      <button class="note-btn" onclick="cancelEditNote('${agentId}',${index},'${current.replace(/'/g,"\\'")}')">✕</button>
+    `;
+    const input = document.getElementById(`edit-input-${key}-${index}`);
+    input.focus();
+    input.addEventListener('keydown', e => { if(e.key==='Enter') saveEditNote(agentId,index); if(e.key==='Escape') cancelEditNote(agentId,index,current); });
+  }
+
+  function saveEditNote(agentId, index) {
+    const key = agentId.replace(/[^a-z0-9]/gi,'_');
+    const input = document.getElementById(`edit-input-${key}-${index}`);
+    if (!input) return;
+    fetch('/api/edit_note', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({agent_id: agentId, index, text: input.value})
+    });
+  }
+
+  function cancelEditNote(agentId, index, original) {
+    const key = agentId.replace(/[^a-z0-9]/gi,'_');
+    const item = document.getElementById(`note-item-${key}-${index}`);
+    item.innerHTML = `
+      <span class="note-text">${original}</span>
+      <button class="note-btn" title="Edit" onclick="startEditNote('${agentId}',${index},this)">✎</button>
+      <button class="note-btn" title="Delete" onclick="deleteNote('${agentId}',${index})">✕</button>
+    `;
+  }
+
+  function deleteNote(agentId, index) {
+    fetch('/api/delete_note', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({agent_id: agentId, index})
     });
   }
 
@@ -630,7 +693,7 @@ def _snapshot(watcher):
             "alerted":        state.alerted,
             "paused":         state.paused,
             "flagged":        state.flagged,
-            "notes":          state.notes,
+            "notes":          [{"i": i, "text": n} for i, n in enumerate(state.notes)],
             "alert_reason":   matched.reason if matched else None,
             "proj_1h":        f"{state.projected_cost_1h:.4f}",
             "budget":         f"{state.budget_usd:.2f}" if state.budget_usd else None,
@@ -701,6 +764,22 @@ def api_note():
 @app.route("/api/dismiss",    methods=["POST"])
 def api_dismiss():
     _watcher.dismiss_alert(request.json["alert_id"]); return jsonify(ok=True)
+
+@app.route("/api/delete_alert", methods=["POST"])
+def api_delete_alert():
+    _watcher.delete_alert(request.json["alert_id"]); return jsonify(ok=True)
+
+@app.route("/api/edit_note", methods=["POST"])
+def api_edit_note():
+    d = request.json
+    ok = _watcher.edit_note(d["agent_id"], d["index"], d["text"])
+    return jsonify(ok=ok)
+
+@app.route("/api/delete_note", methods=["POST"])
+def api_delete_note():
+    d = request.json
+    ok = _watcher.delete_note(d["agent_id"], d["index"])
+    return jsonify(ok=ok)
 
 @app.route("/api/set_budget", methods=["POST"])
 def api_set_budget():
