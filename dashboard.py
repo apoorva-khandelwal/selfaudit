@@ -967,7 +967,7 @@ def api_clear_flag():
 @app.route("/api/thresholds", methods=["POST"])
 def api_thresholds():
     d = request.json
-    old = (_watcher.retry_threshold, _watcher.cost_threshold, _watcher.time_threshold)
+    old = (_watcher._retry_threshold, _watcher._cost_threshold, _watcher._time_threshold)
     _watcher.set_thresholds(retry=d.get("retry"), cost=d.get("cost"), time=d.get("time"))
     _push_undo("set global thresholds",
                lambda o=old: _watcher.set_thresholds(retry=o[0], cost=o[1], time=o[2]))
