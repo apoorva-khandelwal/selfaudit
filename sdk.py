@@ -547,18 +547,23 @@ class Watcher:
         except Exception:
             rec["past_alerts"] = []
 
-        alert = Alert(
-            agent_id=agent_id,
-            reason=reason,
-            cost_usd=cost,
-            retry_count=retries,
-            progress_score=progress,
-            recommendation=rec,
-        )
-        with self._lock:
-            self.alerts.append(alert)
-        self._dirty.set()
-        self._on_alert(alert)
+        try:
+            alert = Alert(
+                agent_id=agent_id,
+                reason=reason,
+                cost_usd=cost,
+                retry_count=retries,
+                progress_score=progress,
+                recommendation=rec,
+            )
+            with self._lock:
+                self.alerts.append(alert)
+            self._dirty.set()
+            self._on_alert(alert)
+        except Exception as e:
+            import traceback
+            print(f"[watcher] _fire_alert failed to append alert: {e}")
+            traceback.print_exc()
 
     def _print_alert(self, alert: Alert):
         rec = alert.recommendation
