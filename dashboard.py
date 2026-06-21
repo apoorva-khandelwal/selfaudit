@@ -460,13 +460,12 @@ HTML = """
           <span class="review-time">${f.time}</span>
         </div>
         <div class="review-reason">${f.reason}</div>
-        <div style="display:flex;gap:16px;margin:6px 0 4px;font-size:11px;color:var(--muted)">
+        <div style="display:flex;gap:16px;margin:6px 0 8px;font-size:11px;color:var(--muted)">
           <span>cost <strong style="color:#ccc">$${f.cost}</strong></span>
           <span>steps <strong style="color:#ccc">${f.progress}</strong></span>
           <span>retries <strong style="color:#ccc">${f.retries}</strong></span>
           <span>proj/hr <strong style="color:#ccc">$${f.proj_1h}</strong></span>
         </div>
-        ${f.rec ? `<div style="font-size:10px;color:#666;line-height:1.6;margin-bottom:8px;white-space:pre-wrap">${f.rec}</div>` : ''}
         <div class="review-actions">
           <button class="btn-escalate" onclick="escalate('${f.agent_id}')">⛔ Escalate to Alert</button>
           <button class="btn-clear"    onclick="clearFlag('${f.agent_id}')">✓ Looks fine — clear</button>
@@ -582,7 +581,7 @@ def _snapshot(watcher):
         if state.flagged and not state.alerted:
             watcher_notes = [n for n in state.notes if "[watcher]" in n]
             reason = watcher_notes[-1].split("[watcher] ")[-1] if watcher_notes else "ambiguous signals detected"
-            rec = _flag_rec(state)
+            rec = ""  # recommendation shown only after escalation to alert
             flagged_list.append({
                 "agent_id":   agent_id,
                 "reason":     reason,
