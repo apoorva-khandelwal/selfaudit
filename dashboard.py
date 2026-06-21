@@ -365,10 +365,23 @@ HTML = """
         ${pauseBtn}
         ${flagBtn}
         <button class="btn btn-note" onclick="toggleNote('${a.agent_id}', this)">✎ Note</button>
+        <button class="btn btn-note" onclick="toggleThresh('${a.agent_id}')">⚙ Thresholds</button>
       </div>
       <div class="note-row" id="note-${a.agent_id.replace(/[^a-z0-9]/gi,'_')}">
         <input class="note-input" type="text" placeholder="add a note..." onkeydown="if(event.key==='Enter')sendNote('${a.agent_id}',this)">
         <button class="btn-send" onclick="sendNote('${a.agent_id}',this.previousElementSibling)">Send</button>
+      </div>
+      <div class="note-row" id="thresh-${a.agent_id.replace(/[^a-z0-9]/gi,'_')}" style="flex-direction:column;gap:6px">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <span style="font-size:10px;color:var(--muted)">retries</span>
+          <input class="note-input" type="number" id="tr-r-${a.agent_id.replace(/[^a-z0-9]/gi,'_')}" placeholder="global" value="${a.t_retry ?? ''}" style="width:60px">
+          <span style="font-size:10px;color:var(--muted)">cost ($)</span>
+          <input class="note-input" type="number" id="tr-c-${a.agent_id.replace(/[^a-z0-9]/gi,'_')}" placeholder="global" value="${a.t_cost ?? ''}" style="width:60px" step="0.01">
+          <span style="font-size:10px;color:var(--muted)">time (s)</span>
+          <input class="note-input" type="number" id="tr-t-${a.agent_id.replace(/[^a-z0-9]/gi,'_')}" placeholder="global" value="${a.t_time ?? ''}" style="width:60px">
+          <button class="btn-send" onclick="applyAgentThresh('${a.agent_id}')">Apply</button>
+        </div>
+        <span style="font-size:9px;color:var(--muted)">leave blank to use global defaults</span>
       </div>
     `;
     return card;
@@ -500,6 +513,28 @@ HTML = """
     setTimeout(() => el.style.opacity = '0', 2500);
   }
 
+  function toggleThresh(agentId) {
+    const key = agentId.replace(/[^a-z0-9]/gi,'_');
+    const row = document.getElementById('thresh-' + key);
+    row.classList.toggle('open');
+  }
+
+  function applyAgentThresh(agentId) {
+    const key = agentId.replace(/[^a-z0-9]/gi,'_');
+    const r = document.getElementById('tr-r-' + key).value;
+    const c = document.getElementById('tr-c-' + key).value;
+    const t = document.getElementById('tr-t-' + key).value;
+    const body = {agent_id: agentId};
+    if (r) body.retry = parseInt(r);
+    if (c) body.cost  = parseFloat(c);
+    if (t) body.time  = parseFloat(t);
+    fetch('/api/agent_thresholds', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+  }
+
   function applyThresholds() {
     fetch('/api/thresholds', {
       method: 'POST',
@@ -567,6 +602,9 @@ def _snapshot(watcher):
             "budget":         f"{state.budget_usd:.2f}" if state.budget_usd else None,
             "model":          state.model,
             "progress_mode":  state.progress_mode,
+            "t_retry":        state.retry_threshold,
+            "t_cost":         state.cost_threshold,
+            "t_time":         state.time_threshold,
         })
 
     import datetime
@@ -655,6 +693,19 @@ def api_clear_flag():
 def api_thresholds():
     d = request.json
     _watcher.set_thresholds(retry=d.get("retry"), cost=d.get("cost"), time=d.get("time"))
+    return jsonify(ok=True)
+
+@app.route("/api/agent_thresholds", methods=["POST"])
+def api_agent_thresholds():
+    d = request.json
+    ok = _watcher.set_agent_thresholds(
+        d["agent_id"],
+        retry=d.get("retry"),
+        cost=d.get("cost"),
+        time=d.get("time"),
+    )
+    if not ok:
+        return jsonify(ok=False, error=f"Agent '{d['agent_id']}' not found"), 404
     return jsonify(ok=True)
 
 

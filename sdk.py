@@ -75,6 +75,9 @@ class _State:
     model: Optional[str] = None          # last model used by this agent
     budget_usd: Optional[float] = None   # hard cap; None = no cap
     progress_mode: str = "unique"        # "unique" or "total"
+    retry_threshold: Optional[int] = None    # per-agent override; None = use global
+    cost_threshold: Optional[float] = None
+    time_threshold: Optional[float] = None
     start_time: float = field(default_factory=time.time)
 
     @property
@@ -260,12 +263,24 @@ class Watcher:
         return True
 
     def set_thresholds(self, retry: int = None, cost: float = None, time: float = None):
-        """Update detection thresholds live — takes effect on the next event."""
+        """Update global detection thresholds — applies to all agents without per-agent overrides."""
         with self._lock:
             if retry is not None: self._retry_threshold = retry
             if cost  is not None: self._cost_threshold  = cost
             if time  is not None: self._time_threshold  = time
         self._dirty.set()
+
+    def set_agent_thresholds(self, agent_id: str, retry: int = None, cost: float = None, time: float = None) -> bool:
+        """Set per-agent threshold overrides. Returns False if agent doesn't exist."""
+        with self._lock:
+            if agent_id not in self.states:
+                return False
+            state = self.states[agent_id]
+            if retry is not None: state.retry_threshold = retry
+            if cost  is not None: state.cost_threshold  = cost
+            if time  is not None: state.time_threshold  = time
+        self._dirty.set()
+        return True
 
     def _set_model(self, agent_id: str, model: str):
         with self._lock:
@@ -372,8 +387,10 @@ class Watcher:
 
     def _evaluate(self, agent_id, retries, cost, progress, elapsed):
         with self._lock:
-            thresholds = (self._retry_threshold, self._cost_threshold, self._time_threshold)
-        retry_t, cost_t, time_t = thresholds
+            state = self.states.get(agent_id)
+            retry_t = state.retry_threshold if state and state.retry_threshold is not None else self._retry_threshold
+            cost_t  = state.cost_threshold  if state and state.cost_threshold  is not None else self._cost_threshold
+            time_t  = state.time_threshold  if state and state.time_threshold  is not None else self._time_threshold
 
         # ── clear breach: all signals point to stuck ───────────────────────────
         clear_reasons = []
