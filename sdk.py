@@ -261,6 +261,14 @@ class Watcher:
                 self.states[agent_id].flagged = False
         self._dirty.set()
 
+    def reflag(self, agent_id: str):
+        """Restore flagged state (undo of clear_flag or escalate)."""
+        with self._lock:
+            if agent_id in self.states:
+                self.states[agent_id].flagged = True
+                self.states[agent_id].alerted = False
+        self._dirty.set()
+
     def escalate_flag(self, agent_id: str):
         """Human reviewed the flag and confirmed the agent is broken — fire a full alert."""
         with self._lock:
@@ -313,9 +321,24 @@ class Watcher:
                     break
         self._dirty.set()
 
+    def undismiss_alert(self, alert_id: str):
+        with self._lock:
+            for a in self.alerts:
+                if a.id == alert_id:
+                    a.dismissed = False
+                    break
+        self._dirty.set()
+
     def delete_alert(self, alert_id: str):
         with self._lock:
             self.alerts = [a for a in self.alerts if a.id != alert_id]
+        self._dirty.set()
+
+    def restore_alert(self, alert: "Alert"):
+        with self._lock:
+            if not any(a.id == alert.id for a in self.alerts):
+                self.alerts.append(alert)
+                self.alerts.sort(key=lambda a: a.timestamp)
         self._dirty.set()
 
     def set_budget(self, agent_id: str, budget_usd: float) -> bool:
@@ -513,10 +536,15 @@ class Watcher:
             print(f"\n[watcher] {agent_id} flagged for review — {'; '.join(ambiguous_reasons)}")
 
     def _fire_alert(self, agent_id, reason, cost, retries, progress):
-        with self._lock:
-            model = self.states[agent_id].model if agent_id in self.states else None
-        situation = "zero_progress" if progress == 0 else "stuck_subtask"
-        rec = _build_recommendation(agent_id, model, cost, retries, progress, situation)
+        try:
+            with self._lock:
+                model = self.states[agent_id].model if agent_id in self.states else None
+            situation = "zero_progress" if progress == 0 else "stuck_subtask"
+            rec = _build_recommendation(agent_id, model, cost, retries, progress, situation)
+        except Exception as e:
+            print(f"[watcher] _fire_alert error building rec: {e}")
+            rec = {"headline": "", "steps": [], "alternatives": []}
+            model = None
 
         # pull similar past alerts from Redis memory (silent if unavailable)
         try:
@@ -527,18 +555,23 @@ class Watcher:
         except Exception:
             rec["past_alerts"] = []
 
-        alert = Alert(
-            agent_id=agent_id,
-            reason=reason,
-            cost_usd=cost,
-            retry_count=retries,
-            progress_score=progress,
-            recommendation=rec,
-        )
-        with self._lock:
-            self.alerts.append(alert)
-        self._dirty.set()
-        self._on_alert(alert)
+        try:
+            alert = Alert(
+                agent_id=agent_id,
+                reason=reason,
+                cost_usd=cost,
+                retry_count=retries,
+                progress_score=progress,
+                recommendation=rec,
+            )
+            with self._lock:
+                self.alerts.append(alert)
+            self._dirty.set()
+            self._on_alert(alert)
+        except Exception as e:
+            import traceback
+            print(f"[watcher] _fire_alert failed to append alert: {e}")
+            traceback.print_exc()
 
     def _print_alert(self, alert: Alert):
         rec = alert.recommendation

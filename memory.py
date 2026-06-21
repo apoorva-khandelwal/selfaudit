@@ -78,23 +78,27 @@ def store_alert(agent_id: str, reason: str, model: str, cost: float,
         pass
 
 
-def get_similar(agent_id: str, reason: str, model: str, top_k: int = 3) -> list:
-    """Return top_k past alerts most similar to this one."""
+def get_similar(agent_id: str, reason: str, model: str, top_k: int = 3,
+                min_age_seconds: float = 3600) -> list:
+    """Return top_k past alerts most similar to this one, from previous sessions only."""
     r = _client()
     if not r:
         return []
     try:
+        import datetime
         query_vec = _embed(f"{agent_id} {reason} {model or ''}")
         keys = r.smembers(_INDEX_KEY)
+        cutoff = time.time() - min_age_seconds
         scored = []
         for key in keys:
             raw = r.hgetall(key)
             if not raw or b"embedding" not in raw:
                 continue
+            ts = float(raw.get(b"ts", b"0").decode())
+            if ts > cutoff:
+                continue  # skip alerts from this session
             stored = np.frombuffer(raw[b"embedding"], dtype=np.float32)
             score = float(np.dot(query_vec, stored))
-            import datetime
-            ts = float(raw.get(b"ts", b"0").decode())
             scored.append((score, {
                 "agent_id": raw.get(b"agent_id", b"").decode(),
                 "reason":   raw.get(b"reason", b"").decode(),
@@ -104,8 +108,6 @@ def get_similar(agent_id: str, reason: str, model: str, top_k: int = 3) -> list:
                 "time":     datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts else "?",
             }))
         scored.sort(key=lambda x: x[0], reverse=True)
-        # exclude exact same agent+reason match (current alert)
-        return [d for _, d in scored[:top_k + 1]
-                if not (d["agent_id"] == agent_id and d["reason"] == reason)][:top_k]
+        return [d for _, d in scored[:top_k]]
     except Exception:
         return []
