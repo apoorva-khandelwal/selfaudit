@@ -20,7 +20,7 @@ def run_healthy(watcher: Watcher, agent_id: str):
     actions = ["fetch_data", "parse_response", "summarize", "write_output"]
     for i, action in enumerate(actions):
         time.sleep(random.uniform(1.0, 2.0))
-        with watcher.trace(agent_id, action) as t:
+        with watcher.trace(agent_id, action, model="claude-haiku-4-5") as t:
             t.success(cost_usd=round(random.uniform(0.002, 0.008), 4),
                       completed=(i == len(actions) - 1))
 
@@ -28,7 +28,7 @@ def run_healthy(watcher: Watcher, agent_id: str):
 def run_stuck(watcher: Watcher, agent_id: str):
     for _ in range(20):
         time.sleep(random.uniform(0.8, 1.2))
-        with watcher.trace(agent_id, "call_external_api") as t:
+        with watcher.trace(agent_id, "call_external_api", model="claude-opus-4-8") as t:
             t.fail(cost_usd=round(random.uniform(0.015, 0.025), 4))
 
 
@@ -36,14 +36,14 @@ def run_slow(watcher: Watcher, agent_id: str):
     actions = ["load_dataset", "preprocess", "run_inference", "validate", "format_output"]
     for i, action in enumerate(actions):
         time.sleep(random.uniform(1.8, 2.5))
-        with watcher.trace(agent_id, action) as t:
+        with watcher.trace(agent_id, action, model="claude-sonnet-4-6") as t:
             t.success(cost_usd=round(random.uniform(0.005, 0.012), 4),
                       completed=(i == len(actions) - 1))
 
 
 def run_fast_fail(watcher: Watcher, agent_id: str):
     time.sleep(0.2)
-    with watcher.trace(agent_id, "authenticate") as t:
+    with watcher.trace(agent_id, "authenticate", model="claude-sonnet-4-6") as t:
         t.fail(cost_usd=round(random.uniform(0.001, 0.003), 4))
 
 
@@ -51,11 +51,11 @@ def run_intermittent(watcher: Watcher, agent_id: str):
     """Makes some progress then gets stuck — tests the ambiguous zone."""
     for action in ["connect", "fetch"]:
         time.sleep(1.0)
-        with watcher.trace(agent_id, action) as t:
+        with watcher.trace(agent_id, action, model="claude-opus-4-8") as t:
             t.success(cost_usd=round(random.uniform(0.003, 0.007), 4))
     for _ in range(15):
         time.sleep(1.0)
-        with watcher.trace(agent_id, "process_chunk") as t:
+        with watcher.trace(agent_id, "process_chunk", model="claude-opus-4-8") as t:
             t.fail(cost_usd=round(random.uniform(0.010, 0.020), 4))
 
 

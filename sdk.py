@@ -123,14 +123,17 @@ class Alert:
 # ── trace handle ───────────────────────────────────────────────────────────────
 
 class TraceHandle:
-    def __init__(self, watcher: "Watcher", agent_id: str, action: str):
+    def __init__(self, watcher: "Watcher", agent_id: str, action: str, model: str = None):
         self._watcher  = watcher
         self._agent_id = agent_id
         self._action   = action
+        self._model    = model
         self._resolved = False
 
     def success(self, cost_usd: float = 0.0, completed: bool = False, output: str = ""):
         self._resolved = True
+        if self._model:
+            self._watcher._set_model(self._agent_id, self._model)
         self._watcher._record(self._agent_id, self._action,
                                cost_usd=cost_usd, success=True,
                                completed=completed, output=output)
@@ -146,6 +149,8 @@ class TraceHandle:
 
     def fail(self, cost_usd: float = 0.0):
         self._resolved = True
+        if self._model:
+            self._watcher._set_model(self._agent_id, self._model)
         self._watcher._record(self._agent_id, self._action,
                                cost_usd=cost_usd, success=False,
                                completed=False, output="")
@@ -187,8 +192,8 @@ class Watcher:
     # ── public control API ─────────────────────────────────────────────────────
 
     @contextmanager
-    def trace(self, agent_id: str, action: str):
-        handle = TraceHandle(self, agent_id, action)
+    def trace(self, agent_id: str, action: str, model: str = None):
+        handle = TraceHandle(self, agent_id, action, model=model)
         try:
             yield handle
         except Exception:
