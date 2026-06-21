@@ -73,12 +73,13 @@ def build_agent_plan(n: int):
     plan = []
     # first 4 are always the canonical set
     fixed = [
-        (run_healthy,   "healthy"),
-        (run_stuck,     "stuck"),
-        (run_slow,      "slow"),
-        (run_fast_fail, "fast-fail"),
+        (run_healthy,      "healthy"),
+        (run_stuck,        "stuck"),
+        (run_slow,         "slow"),
+        (run_fast_fail,    "fast-fail"),
+        (run_intermittent, "intermittent"),
     ]
-    for fn, name in fixed[:min(n, 4)]:
+    for fn, name in fixed[:min(n, 5)]:
         idx = len(plan) + 1
         plan.append((fn, f"agent-{idx} ({name})"))
 

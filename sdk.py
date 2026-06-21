@@ -26,7 +26,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
 
-from models import get_cheaper_alternatives, format_tradeoffs
+from models import MODELS, get_cheaper_alternatives, format_tradeoffs
 
 _ANTHROPIC_PRICES = {
     "claude-opus-4-8":   (5.00 / 1_000_000, 25.00 / 1_000_000),
@@ -34,8 +34,11 @@ _ANTHROPIC_PRICES = {
     "claude-haiku-4-5":  (1.00 / 1_000_000,  5.00 / 1_000_000),
 }
 
-_MODEL_ALTERNATIVES   = get_cheaper_alternatives("claude-opus-4-8", 5.00)
-_MODEL_TRADEOFFS_TEXT = format_tradeoffs(_MODEL_ALTERNATIVES)
+def _model_rec(model: Optional[str]) -> str:
+    m = next((x for x in MODELS if x["id"] == model), None)
+    price = m["input_cost_per_1m"] if m else 5.00
+    alts = get_cheaper_alternatives(model or "claude-opus-4-8", price)
+    return format_tradeoffs(alts)
 
 RETRY_ALERT_THRESHOLD    = 3
 COST_STALL_THRESHOLD_USD = 0.05
@@ -68,6 +71,7 @@ class _State:
     flagged: bool = False
     notes: List[str] = field(default_factory=list)
     peer_verdict: Optional[dict] = None
+    model: Optional[str] = None          # last model used by this agent
     budget_usd: Optional[float] = None   # hard cap; None = no cap
     start_time: float = field(default_factory=time.time)
 
@@ -132,6 +136,7 @@ class TraceHandle:
         usage = response.usage
         cost = usage.input_tokens * in_p + usage.output_tokens * out_p
         output = getattr(response.content[0], "text", "") if response.content else ""
+        self._watcher._set_model(self._agent_id, model)
         self.success(cost_usd=round(cost, 6), completed=completed, output=output)
 
     def fail(self, cost_usd: float = 0.0):
@@ -257,6 +262,11 @@ class Watcher:
             if cost  is not None: self._cost_threshold  = cost
             if time  is not None: self._time_threshold  = time
         self._dirty.set()
+
+    def _set_model(self, agent_id: str, model: str):
+        with self._lock:
+            if agent_id in self.states:
+                self.states[agent_id].model = model
 
     def mark_complete(self, agent_id: str):
         with self._lock:
@@ -401,6 +411,8 @@ class Watcher:
             print(f"\n[watcher] {agent_id} flagged for review — {'; '.join(ambiguous_reasons)}")
 
     def _fire_alert(self, agent_id, reason, cost, retries, progress):
+        with self._lock:
+            model = self.states[agent_id].model if agent_id in self.states else None
         alert = Alert(
             agent_id=agent_id,
             reason=reason,
@@ -410,7 +422,7 @@ class Watcher:
             recommendation=(
                 f"Pause {agent_id} — ${cost:.4f} spent, "
                 f"{progress} steps, {retries} retries.\n"
-                + _MODEL_TRADEOFFS_TEXT
+                + _model_rec(model)
             ),
         )
         with self._lock:

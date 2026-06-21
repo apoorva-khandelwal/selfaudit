@@ -8,9 +8,14 @@ import json
 import time
 import threading
 from flask import Flask, Response, render_template_string, request, jsonify
-from models import get_cheaper_alternatives, format_tradeoffs
+from models import MODELS, get_cheaper_alternatives, format_tradeoffs
 
-_FLAG_REC = format_tradeoffs(get_cheaper_alternatives("claude-opus-4-8", 5.00))
+
+def _model_rec(model):
+    m = next((x for x in MODELS if x["id"] == model), None)
+    price = m["input_cost_per_1m"] if m else 5.00
+    alts = get_cheaper_alternatives(model or "claude-opus-4-8", price)
+    return format_tradeoffs(alts)
 
 app = Flask(__name__)
 _watcher = None
@@ -327,6 +332,7 @@ HTML = """
     const notesHTML = (a.notes||[]).map(n =>
       `<div class="note-item">${n}</div>`).join('');
 
+    const modelTag      = a.model ? `<span style="font-size:9px;color:var(--muted);margin-left:4px">[${a.model}]</span>` : '';
     const alertCallout  = a.alert_reason  ? `<div class="callout red">${a.alert_reason}</div>` : '';
     const flagCallout   = a.flagged && !a.alert_reason ? `<div class="callout orange">⚠ flagged for human review</div>` : '';
     const pauseCallout  = a.paused ? `<div class="callout blue">⏸ paused — not accumulating cost</div>` : '';
@@ -342,7 +348,7 @@ HTML = """
 
     card.innerHTML = `
       <div class="card-top">
-        <span class="agent-name"><span class="pulse ${pulse}"></span>${a.agent_id}</span>
+        <span class="agent-name"><span class="pulse ${pulse}"></span>${a.agent_id}${modelTag}</span>
         <span class="badge ${badge}">${label}</span>
       </div>
       <div class="metrics">
@@ -511,7 +517,7 @@ def _snapshot(watcher):
         if state.flagged and not state.alerted:
             watcher_notes = [n for n in state.notes if "[watcher]" in n]
             reason = watcher_notes[-1].split("[watcher] ")[-1] if watcher_notes else "ambiguous signals detected"
-            rec = _FLAG_REC
+            rec = _model_rec(state.model)
             flagged_list.append({
                 "agent_id":   agent_id,
                 "reason":     reason,
@@ -538,6 +544,7 @@ def _snapshot(watcher):
             "alert_reason":   matched.reason if matched else None,
             "proj_1h":        f"{state.projected_cost_1h:.4f}",
             "budget":         f"{state.budget_usd:.2f}" if state.budget_usd else None,
+            "model":          state.model,
         })
 
     import datetime
