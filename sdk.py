@@ -359,6 +359,16 @@ class Watcher:
                 self.states[agent_id].completed = True
         self._dirty.set()
 
+    def _push_to_redis(self):
+        """Push current snapshot to Redis for cross-machine sharing. Silent if unavailable."""
+        try:
+            import dashboard as _dash
+            import redis_store as _rs
+            snap = _dash._snapshot(self)
+            _rs.push_snapshot(snap)
+        except Exception:
+            pass
+
     def start_dashboard(self, port: int = 5050):
         import dashboard as _dash
         _dash.start(self, port=port)
@@ -443,6 +453,7 @@ class Watcher:
             snap_budget   = state.budget_usd
 
         self._dirty.set()
+        threading.Thread(target=self._push_to_redis, daemon=True).start()
 
         if budget_hit:
             print(f"\n[watcher] {agent_id} auto-paused — hit budget cap of ${snap_budget:.2f}")

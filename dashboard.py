@@ -785,13 +785,45 @@ def index():
 @app.route("/stream")
 def stream():
     def generate():
+        # send initial snapshot from local watcher or Redis
         if _watcher and _watcher.states:
             yield f"data: {json.dumps(_snapshot(_watcher))}\n\n"
-        while True:
-            changed = _watcher._dirty.wait(timeout=2.0) if _watcher else False
-            if changed and _watcher and _watcher.states:
-                _watcher._dirty.clear()
-                yield f"data: {json.dumps(_snapshot(_watcher))}\n\n"
+        else:
+            try:
+                import redis_store as _rs
+                snap = _rs.get_snapshot()
+                if snap:
+                    yield f"data: {json.dumps(snap)}\n\n"
+            except Exception:
+                pass
+
+        if _watcher:
+            # local mode: use threading.Event
+            while True:
+                changed = _watcher._dirty.wait(timeout=2.0)
+                if changed and _watcher.states:
+                    _watcher._dirty.clear()
+                    yield f"data: {json.dumps(_snapshot(_watcher))}\n\n"
+        else:
+            # viewer mode (friend's machine): subscribe to Redis pub/sub
+            try:
+                import redis_store as _rs
+                for _ in _rs.subscribe():
+                    snap = _rs.get_snapshot()
+                    if snap:
+                        yield f"data: {json.dumps(snap)}\n\n"
+            except Exception:
+                # fall back to polling every 2s if pub/sub fails
+                while True:
+                    time.sleep(2)
+                    try:
+                        import redis_store as _rs
+                        snap = _rs.get_snapshot()
+                        if snap:
+                            yield f"data: {json.dumps(snap)}\n\n"
+                    except Exception:
+                        pass
+
     return Response(generate(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
@@ -878,3 +910,18 @@ def start(watcher, port=5050):
         daemon=True,
     ).start()
     print(f"  Dashboard → http://localhost:{port}\n")
+
+
+def start_viewer(port=5050):
+    """Start dashboard in viewer-only mode — reads live data from Redis (no local watcher needed)."""
+    global _watcher
+    _watcher = None
+    app.run(port=port, debug=False, use_reloader=False)
+
+
+if __name__ == "__main__":
+    import sys
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 5050
+    print(f"SelfAudit viewer — connecting to Redis for live data...")
+    print(f"Dashboard → http://localhost:{port}")
+    start_viewer(port=port)
