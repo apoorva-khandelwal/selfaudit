@@ -250,13 +250,14 @@ class Watcher:
                     break
         self._dirty.set()
 
-    def set_budget(self, agent_id: str, budget_usd: float):
-        """Set a hard cost cap for an agent. Watcher auto-pauses it when hit."""
+    def set_budget(self, agent_id: str, budget_usd: float) -> bool:
+        """Set a hard cost cap for an agent. Returns False if agent doesn't exist yet."""
         with self._lock:
             if agent_id not in self.states:
-                self.states[agent_id] = self._new_state(agent_id)
+                return False
             self.states[agent_id].budget_usd = budget_usd
         self._dirty.set()
+        return True
 
     def set_thresholds(self, retry: int = None, cost: float = None, time: float = None):
         """Update detection thresholds live — takes effect on the next event."""

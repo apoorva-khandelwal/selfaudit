@@ -471,12 +471,33 @@ HTML = """
   function applyBudget() {
     const agent = document.getElementById('b-agent').value.trim();
     const cap   = parseFloat(document.getElementById('b-cap').value);
-    if (!agent) { alert('Enter an agent ID'); return; }
+    if (!agent) { showBudgetMsg('Enter an agent ID', 'var(--orange)'); return; }
     fetch('/api/set_budget', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({agent_id: agent, budget_usd: cap})
+    }).then(r => r.json()).then(d => {
+      if (d.ok) {
+        showBudgetMsg(`Budget $${cap.toFixed(2)} set for ${agent}`, 'var(--green)');
+        document.getElementById('b-agent').value = '';
+      } else {
+        showBudgetMsg(d.error, 'var(--red)');
+      }
     });
+  }
+
+  function showBudgetMsg(msg, color) {
+    let el = document.getElementById('budget-msg');
+    if (!el) {
+      el = document.createElement('span');
+      el.id = 'budget-msg';
+      el.style.cssText = 'font-size:10px;transition:opacity .5s';
+      document.querySelector('.thresholds').appendChild(el);
+    }
+    el.style.color = color;
+    el.style.opacity = '1';
+    el.textContent = msg;
+    setTimeout(() => el.style.opacity = '0', 2500);
   }
 
   function applyThresholds() {
@@ -612,7 +633,9 @@ def api_dismiss():
 @app.route("/api/set_budget", methods=["POST"])
 def api_set_budget():
     d = request.json
-    _watcher.set_budget(d["agent_id"], d["budget_usd"])
+    ok = _watcher.set_budget(d["agent_id"], d["budget_usd"])
+    if not ok:
+        return jsonify(ok=False, error=f"Agent '{d['agent_id']}' not found"), 404
     return jsonify(ok=True)
 
 @app.route("/api/escalate", methods=["POST"])
