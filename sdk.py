@@ -326,6 +326,13 @@ class Watcher:
             self.alerts = [a for a in self.alerts if a.id != alert_id]
         self._dirty.set()
 
+    def restore_alert(self, alert: "Alert"):
+        with self._lock:
+            if not any(a.id == alert.id for a in self.alerts):
+                self.alerts.append(alert)
+                self.alerts.sort(key=lambda a: a.timestamp)
+        self._dirty.set()
+
     def set_budget(self, agent_id: str, budget_usd: float) -> bool:
         """Set a hard cost cap for an agent. Returns False if agent doesn't exist yet."""
         with self._lock:

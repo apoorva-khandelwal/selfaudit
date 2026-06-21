@@ -562,7 +562,7 @@ HTML = """
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({alert_id: alertId})
-    });
+    }).then(() => refreshUndoBtn());
   }
 
   function startEditNote(agentId, index, btn) {
@@ -903,8 +903,11 @@ def api_dismiss():
 
 @app.route("/api/delete_alert", methods=["POST"])
 def api_delete_alert():
-    # delete is not undoable
-    _watcher.delete_alert(request.json["alert_id"])
+    alert_id = request.json["alert_id"]
+    alert = next((a for a in _watcher.alerts if a.id == alert_id), None)
+    _watcher.delete_alert(alert_id)
+    if alert:
+        _push_undo(f"delete alert on {alert.agent_id}", lambda a=alert: _watcher.restore_alert(a))
     return jsonify(ok=True)
 
 @app.route("/api/edit_note", methods=["POST"])
