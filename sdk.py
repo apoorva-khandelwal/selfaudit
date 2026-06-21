@@ -289,8 +289,9 @@ class Watcher:
 
     def _set_model(self, agent_id: str, model: str):
         with self._lock:
-            if agent_id in self.states:
-                self.states[agent_id].model = model
+            if agent_id not in self.states:
+                self.states[agent_id] = self._new_state(agent_id)
+            self.states[agent_id].model = model
 
     def mark_complete(self, agent_id: str):
         with self._lock:
