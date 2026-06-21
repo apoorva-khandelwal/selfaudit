@@ -13,6 +13,7 @@ from models import MODELS, get_cheaper_alternatives, format_tradeoffs
 
 def _flag_rec(state):
     from sdk import _build_recommendation
+    # pick situation from the watcher note
     notes = [n for n in state.notes if "[watcher]" in n]
     last = notes[-1] if notes else ""
     if "cost/progress ratio" in last:
@@ -35,506 +36,275 @@ HTML = """
 <head>
   <meta charset="UTF-8">
   <title>SelfAudit</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
-      --bg: #151515;
-      --sidebar: #1a1a1a;
-      --surface: #1f1f1f;
-      --surface2: #262626;
-      --border: #2e2e2e;
-      --border2: #3d3d3d;
-      --text: #e8e8e8;
-      --muted: #888;
-      --muted2: #555;
-      --accent: #f54e00;
-      --green: #22c55e; --red: #ef4444; --orange: #f97316;
-      --blue: #3b82f6; --yellow: #eab308;
+      --bg: #0a0a0a; --surface: #141414; --surface2: #1a1a1a;
+      --border: #222; --text: #e0e0e0; --muted: #555;
+      --green: #30d158; --red: #ff3b30; --orange: #ff9f0a;
+      --blue: #0a84ff; --purple: #bf5af2;
     }
-    html, body { height: 100%; }
-    body {
-      background: var(--bg); color: var(--text);
-      font-family: 'Inter', system-ui, sans-serif; font-size: 13px;
-      line-height: 1.5; display: flex;
-    }
-    code, .mono { font-family: 'SF Mono','Menlo','Consolas',monospace; font-size: 12px; }
+    body { background: var(--bg); color: var(--text); font-family: 'SF Mono','Menlo','Consolas',monospace; font-size: 13px; }
 
-    /* ── sidebar ── */
-    .sidebar {
-      width: 220px; min-height: 100vh; flex-shrink: 0;
-      background: var(--sidebar); border-right: 1px solid var(--border);
-      display: flex; flex-direction: column;
-      position: fixed; top: 0; left: 0; bottom: 0; z-index: 30;
-    }
-    .sidebar-logo {
-      padding: 18px 16px 14px;
-      display: flex; align-items: center; gap: 10px;
+    /* header */
+    .header {
+      position: sticky; top: 0; z-index: 20;
+      background: rgba(10,10,10,0.95); backdrop-filter: blur(12px);
       border-bottom: 1px solid var(--border);
+      padding: 12px 24px; display: flex; align-items: center; gap: 28px;
     }
-    .logo-mark {
-      width: 28px; height: 28px; border-radius: 7px; flex-shrink: 0;
-      background: var(--accent);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 14px; font-weight: 900; color: #fff; letter-spacing: -.02em;
-    }
-    .logo-text { font-size: 14px; font-weight: 700; color: var(--text); letter-spacing: -.01em; }
-    .logo-text span { color: var(--accent); }
+    .logo { font-size: 15px; font-weight: 700; color: #fff; letter-spacing:.05em; }
+    .logo span { color: var(--green); }
+    .stats { display: flex; gap: 20px; flex: 1; }
+    .stat label { display:block; font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); margin-bottom:2px; }
+    .stat .val { font-size:14px; font-weight:600; }
+    .stat .val.danger { color: var(--red); }
+    .stat .val.good   { color: var(--green); }
+    .live { width:7px; height:7px; border-radius:50%; background:var(--green); animation:blink 1.4s infinite; margin-left:auto; }
+    .live.off { background:var(--muted); animation:none; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
 
-    .sidebar-section { padding: 16px 10px 4px; font-size: 10px; font-weight: 600; color: var(--muted2); letter-spacing: .08em; text-transform: uppercase; }
-    .nav-item {
-      display: flex; align-items: center; gap: 10px;
-      padding: 7px 12px; border-radius: 6px; margin: 1px 6px;
-      font-size: 13px; font-weight: 500; color: var(--muted);
-      cursor: pointer; transition: all .12s; text-decoration: none;
+    /* settings panel */
+    .settings-toggle, .undo-btn {
+      background: transparent; border: 1px solid var(--border); color: var(--muted);
+      font-family: inherit; font-size: 10px; padding: 3px 10px; border-radius: 4px;
+      cursor: pointer; letter-spacing:.06em;
     }
-    .nav-item:hover { background: var(--surface2); color: var(--text); }
-    .nav-item.active { background: var(--surface2); color: var(--text); }
-    .nav-item .nav-icon { font-size: 14px; width: 18px; text-align: center; flex-shrink: 0; }
-    .nav-badge {
-      margin-left: auto; font-size: 10px; font-weight: 700;
-      background: rgba(239,68,68,.15); color: var(--red);
-      border-radius: 99px; padding: 1px 6px; min-width: 18px; text-align: center;
-    }
-    .nav-badge.orange { background: rgba(249,115,22,.15); color: var(--orange); }
-
-    .sidebar-bottom {
-      margin-top: auto; padding: 12px 10px;
-      border-top: 1px solid var(--border);
-      display: flex; flex-direction: column; gap: 4px;
-    }
-    .live-status { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 6px; }
-    .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); flex-shrink: 0; animation: pulse-dot 2s infinite; }
-    .live-dot.off { background: var(--muted2); animation: none; }
-    @keyframes pulse-dot { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(.85)} }
-    .live-label { font-size: 11px; color: var(--muted); }
-    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
-
-    /* ── page shell ── */
-    .page { margin-left: 220px; min-height: 100vh; display: flex; flex-direction: column; }
-
-    /* ── topbar ── */
-    .topbar {
-      height: 52px; border-bottom: 1px solid var(--border);
-      display: flex; align-items: center; gap: 12px;
-      padding: 0 24px; flex-shrink: 0;
-      background: var(--bg);
-    }
-    .topbar-title { font-size: 15px; font-weight: 600; color: var(--text); flex: 1; }
-    .topbar-actions { display: flex; align-items: center; gap: 8px; }
-    .btn-sm {
-      font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 500;
-      padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border);
-      background: var(--surface); color: var(--muted); cursor: pointer; transition: all .12s;
-    }
-    .btn-sm:hover { color: var(--text); border-color: var(--border2); background: var(--surface2); }
-    .btn-sm:disabled { opacity: .35; cursor: default; }
-    .btn-sm:disabled:hover { color: var(--muted); border-color: var(--border); background: var(--surface); }
-    .btn-primary {
-      font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 600;
-      padding: 5px 14px; border-radius: 6px; border: none;
-      background: var(--accent); color: #fff; cursor: pointer;
-    }
-    .btn-primary:hover { opacity: .88; }
-
-    /* ── insight stat row ── */
-    .insight-row {
-      display: grid; grid-template-columns: repeat(7,1fr); gap: 1px;
-      background: var(--border); border-bottom: 1px solid var(--border);
-      flex-shrink: 0;
-    }
-    .insight-cell {
-      background: var(--bg); padding: 16px 20px;
-      display: flex; flex-direction: column; gap: 4px;
-    }
-    .insight-label { font-size: 11px; font-weight: 500; color: var(--muted); }
-    .insight-value { font-size: 22px; font-weight: 700; color: var(--text); font-family: 'SF Mono','Menlo',monospace; letter-spacing: -.02em; }
-    .insight-value.red    { color: var(--red); }
-    .insight-value.green  { color: var(--green); }
-    .insight-value.blue   { color: var(--blue); }
-    .insight-value.orange { color: var(--orange); }
-
-    /* ── settings drawer ── */
+    .settings-toggle:hover, .undo-btn:hover { color: var(--text); border-color: var(--muted); }
+    .undo-btn:disabled { opacity: 0.3; cursor: default; }
+    .undo-btn:disabled:hover { color: var(--muted); border-color: var(--border); }
     .settings-panel {
       display: none; background: var(--surface); border-bottom: 1px solid var(--border);
-      padding: 12px 24px; gap: 16px; flex-wrap: wrap; align-items: center; flex-shrink: 0;
+      padding: 12px 24px; gap: 20px; flex-wrap: wrap; align-items: center;
     }
     .settings-panel.open { display: flex; }
-    .settings-panel > span { font-size: 11px; color: var(--muted); font-weight: 600; }
-    .threshold-group { display: flex; align-items: center; gap: 6px; }
-    .threshold-group label { font-size: 11px; color: var(--muted); font-weight: 500; }
+    .settings-panel span { font-size:10px; color:var(--muted); letter-spacing:.08em; text-transform:uppercase; }
+    .threshold-group { display:flex; align-items:center; gap:6px; }
+    .threshold-group label { font-size:10px; color:var(--muted); }
     .threshold-group input {
       background: var(--surface2); border: 1px solid var(--border); color: var(--text);
-      font-family: 'SF Mono','Menlo',monospace; font-size: 11px;
-      padding: 4px 8px; border-radius: 6px; width: 64px;
+      font-family: inherit; font-size: 11px; padding: 3px 6px; border-radius: 4px; width: 60px;
     }
-    .threshold-group input:focus { outline: none; border-color: var(--blue); }
     .btn-apply {
-      background: var(--accent); color: #fff; border: none; border-radius: 6px;
-      font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 600;
-      padding: 5px 12px; cursor: pointer;
+      background: var(--blue); color: #fff; border: none; border-radius: 4px;
+      font-family: inherit; font-size: 10px; font-weight:600; padding: 4px 10px;
+      cursor: pointer; letter-spacing:.06em;
     }
-    .btn-apply:hover { opacity: .88; }
+    .btn-apply:hover { opacity:.85; }
 
-    /* ── main content ── */
-    .main { padding: 24px; flex: 1; }
-    .section-wrap { margin-bottom: 32px; }
-    .section-header {
-      display: flex; align-items: center; gap: 10px;
-      margin-bottom: 12px; padding-bottom: 10px;
-      border-bottom: 1px solid var(--border);
-    }
-    .section-title { font-size: 13px; font-weight: 600; color: var(--text); }
-    .section-count {
-      font-size: 10px; font-weight: 700; font-family: monospace;
-      background: var(--surface2); border: 1px solid var(--border);
-      color: var(--muted); padding: 1px 7px; border-radius: 99px;
-    }
+    /* main */
+    .main { padding: 24px; }
+    .section-title { font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); margin-bottom:12px; }
 
-    /* ── agent grid ── */
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px,1fr)); gap: 10px; }
+    /* grid */
+    .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px; margin-bottom:36px; }
 
     .card {
       background: var(--surface); border: 1px solid var(--border);
-      border-radius: 10px; padding: 14px 16px;
-      transition: border-color .15s, box-shadow .15s;
+      border-radius: 10px; padding: 16px;
+      transition: border-color .25s, box-shadow .25s;
     }
-    .card:hover { border-color: var(--border2); box-shadow: 0 2px 12px rgba(0,0,0,.3); }
-    .card.alerted { border-color: rgba(239,68,68,.45); box-shadow: 0 0 0 1px rgba(239,68,68,.1), 0 4px 20px rgba(239,68,68,.1); }
-    .card.done    { border-color: rgba(34,197,94,.2); }
-    .card.paused  { border-color: rgba(59,130,246,.35); opacity: .75; }
-    .card.flagged { border-color: rgba(249,115,22,.35); }
+    .card.alerted  { border-color:var(--red);    box-shadow:0 0 20px rgba(255,59,48,.1); }
+    .card.done     { border-color:#1e3a26; }
+    .card.paused   { border-color:var(--blue);   box-shadow:0 0 20px rgba(10,132,255,.08); opacity:.7; }
+    .card.flagged  { border-color:var(--orange); box-shadow:0 0 20px rgba(255,159,10,.1); }
 
-    .card-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
-    .agent-name { font-size: 13px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 7px; }
-    .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: blink 2s infinite; flex-shrink: 0; }
-    .pulse.red    { background: var(--red); }
-    .pulse.orange { background: var(--orange); }
-    .pulse.blue   { background: var(--blue); animation: none; }
-    .pulse.off    { background: var(--muted2); animation: none; }
+    .card-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+    .agent-name { font-size:13px; font-weight:600; color:#fff; display:flex; align-items:center; gap:6px; }
+    .pulse { width:6px; height:6px; border-radius:50%; background:var(--green); animation:blink 1.4s infinite; }
+    .pulse.red    { background:var(--red); }
+    .pulse.orange { background:var(--orange); }
+    .pulse.blue   { background:var(--blue); animation:none; }
+    .pulse.off    { background:#2a2a2a; animation:none; }
 
-    .badge { font-size: 10px; font-weight: 600; letter-spacing: .03em; padding: 2px 8px; border-radius: 99px; flex-shrink: 0; }
-    .badge.running { background: rgba(34,197,94,.1);  color: #4ade80; border: 1px solid rgba(34,197,94,.2); }
-    .badge.alerted { background: rgba(239,68,68,.1);  color: #f87171; border: 1px solid rgba(239,68,68,.2); }
-    .badge.done    { background: rgba(34,197,94,.08); color: #86efac; border: 1px solid rgba(34,197,94,.15); }
-    .badge.paused  { background: rgba(59,130,246,.1); color: #93c5fd; border: 1px solid rgba(59,130,246,.2); }
-    .badge.flagged { background: rgba(249,115,22,.1); color: #fdba74; border: 1px solid rgba(249,115,22,.2); }
+    .badge { font-size:9px; font-weight:700; letter-spacing:.1em; padding:3px 7px; border-radius:4px; text-transform:uppercase; }
+    .badge.running { background:#0d2b18; color:var(--green); }
+    .badge.alerted { background:#2b0d0d; color:var(--red); }
+    .badge.done    { background:#0d2b18; color:#34c759; }
+    .badge.paused  { background:#0a1f2e; color:var(--blue); }
+    .badge.flagged { background:#2b1d0d; color:var(--orange); }
 
-    .metrics { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px; margin-bottom: 10px; }
-    .metric { background: var(--surface2); border-radius: 7px; padding: 8px 10px; border: 1px solid var(--border); }
-    .metric label { display: block; font-size: 10px; color: var(--muted); font-weight: 500; margin-bottom: 2px; }
-    .metric .val { font-size: 15px; font-weight: 700; font-family: 'SF Mono','Menlo',monospace; color: var(--text); }
-    .metric .val.danger { color: var(--red); }
-    .metric .val.good   { color: var(--green); }
-    .metric .val.warn   { color: var(--orange); }
+    .metrics { display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:8px; margin-bottom:10px; }
+    .metric label { display:block; font-size:9px; color:var(--muted); letter-spacing:.08em; text-transform:uppercase; margin-bottom:2px; }
+    .metric .val { font-size:15px; font-weight:600; }
+    .metric .val.danger { color:var(--red); }
+    .metric .val.good   { color:var(--green); }
+    .metric .val.warn   { color:var(--orange); }
 
-    .bar-wrap { background: var(--surface2); border-radius: 99px; height: 2px; margin-bottom: 10px; overflow: hidden; }
-    .bar { height: 100%; border-radius: 99px; background: var(--accent); transition: width .5s ease; }
-    .bar.danger { background: var(--red); }
-    .bar.warn   { background: var(--orange); }
-    .bar.blue   { background: var(--blue); }
+    .bar-wrap { background:#1a1a1a; border-radius:3px; height:3px; margin-bottom:10px; overflow:hidden; }
+    .bar { height:100%; border-radius:3px; background:var(--green); transition:width .4s ease; }
+    .bar.danger { background:var(--red); }
+    .bar.warn   { background:var(--orange); }
+    .bar.blue   { background:var(--blue); }
 
-    .actions { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
-    .action-row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted2); font-family: 'SF Mono','Menlo',monospace; }
-    .action-row.success { color: #4ade80; }
-    .action-row.fail    { color: #f87171; }
+    .actions { display:flex; flex-direction:column; gap:3px; margin-bottom:10px; }
+    .action-row { display:flex; align-items:center; gap:6px; font-size:11px; color:var(--muted); }
+    .action-row.success { color:#3a7a50; }
+    .action-row.fail    { color:#7a3030; }
 
-    .controls { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+    /* controls */
+    .controls { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; padding-top:10px; border-top:1px solid var(--border); }
     .btn {
-      font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 500;
-      padding: 4px 10px; border-radius: 6px; border: 1px solid; cursor: pointer;
-      background: transparent; transition: all .12s;
+      font-family:inherit; font-size:10px; font-weight:600; letter-spacing:.06em;
+      padding:4px 10px; border-radius:4px; border:1px solid; cursor:pointer;
+      background:transparent; transition:background .15s;
     }
-    .btn-pause  { border-color: rgba(59,130,246,.3); color: var(--blue); }
-    .btn-pause:hover  { background: rgba(59,130,246,.1); }
-    .btn-resume { border-color: rgba(59,130,246,.3); color: var(--blue); }
-    .btn-resume:hover { background: rgba(59,130,246,.1); }
-    .btn-note   { border-color: var(--border); color: var(--muted); }
-    .btn-note:hover   { background: var(--surface2); color: var(--text); }
+    .btn-pause  { border-color:#1a3a5a; color:var(--blue); }
+    .btn-pause:hover  { background:#0a1f2e; }
+    .btn-resume { border-color:#1a3a5a; color:var(--blue); }
+    .btn-resume:hover { background:#0a1f2e; }
+    .btn-flag   { border-color:#3a2a0a; color:var(--orange); }
+    .btn-flag:hover   { background:#2b1d0d; }
+    .btn-unflag { border-color:#3a2a0a; color:var(--orange); }
+    .btn-unflag:hover { background:#2b1d0d; }
+    .btn-note   { border-color:var(--border); color:var(--muted); }
+    .btn-note:hover   { background:var(--surface2); color:var(--text); }
 
-    .note-row { display: none; margin-top: 8px; gap: 6px; }
-    .note-row.open { display: flex; }
+    /* note input */
+    .note-row { display:none; margin-top:8px; gap:6px; }
+    .note-row.open { display:flex; }
     .note-input {
-      flex: 1; background: var(--surface2); border: 1px solid var(--border);
-      color: var(--text); font-family: 'Inter', sans-serif; font-size: 11px;
-      padding: 5px 9px; border-radius: 6px;
+      flex:1; background:var(--surface2); border:1px solid var(--border);
+      color:var(--text); font-family:inherit; font-size:11px;
+      padding:4px 8px; border-radius:4px;
     }
-    .note-input:focus { outline: none; border-color: var(--accent); }
-    .btn-send {
-      background: var(--accent); color: #fff; border: none; border-radius: 6px;
-      padding: 5px 12px; font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 500; cursor: pointer;
-    }
+    .btn-send { background:var(--blue); color:#fff; border:none; border-radius:4px; padding:4px 10px; font-family:inherit; font-size:10px; cursor:pointer; }
 
-    .notes-list { margin-top: 8px; display: flex; flex-direction: column; gap: 2px; }
-    .note-item { font-size: 11px; color: var(--muted); padding: 4px 0; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 6px; }
-    .note-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .note-edit-input { flex: 1; background: var(--surface2); border: 1px solid var(--accent); color: var(--text); font-family: 'Inter', sans-serif; font-size: 11px; padding: 2px 6px; border-radius: 4px; }
-    .note-btn { background: none; border: none; cursor: pointer; font-size: 10px; color: var(--muted2); padding: 0 2px; }
-    .note-btn:hover { color: var(--text); }
+    /* notes list */
+    .notes-list { margin-top:8px; display:flex; flex-direction:column; gap:3px; }
+    .note-item { font-size:10px; color:var(--muted); padding:3px 0; border-bottom:1px solid #1a1a1a; display:flex; align-items:center; gap:6px; }
+    .note-text { flex:1; }
+    .note-edit-input { flex:1; background:var(--surface2); border:1px solid var(--border); color:var(--text); font-family:inherit; font-size:10px; padding:2px 6px; border-radius:3px; }
+    .note-btn { background:none; border:none; cursor:pointer; font-size:9px; color:var(--muted); padding:0 2px; }
+    .note-btn:hover { color:var(--text); }
 
-    .callout { margin-top: 10px; padding: 8px 12px; border-radius: 7px; font-size: 11px; line-height: 1.5; border: 1px solid; }
-    .callout.red    { border-color: rgba(239,68,68,.25);  background: rgba(239,68,68,.06);  color: #fca5a5; }
-    .callout.orange { border-color: rgba(249,115,22,.25); background: rgba(249,115,22,.06); color: #fdba74; }
-    .callout.blue   { border-color: rgba(59,130,246,.25); background: rgba(59,130,246,.06); color: #93c5fd; }
+    .callout { margin-top:8px; padding:7px 10px; border-radius:4px; font-size:11px; line-height:1.5; border-left:3px solid; }
+    .callout.red    { border-color:var(--red);    background:rgba(255,59,48,.07);  color:#ff7a72; }
+    .callout.orange { border-color:var(--orange); background:rgba(255,159,10,.07); color:#ffc050; }
+    .callout.blue   { border-color:var(--blue);   background:rgba(10,132,255,.07); color:#5ab0ff; }
 
-    /* ── review queue ── */
+    /* alert log */
+    /* review queue */
+    .review-queue { border-top:1px solid var(--border); padding-top:24px; margin-bottom:32px; }
     .review-entry {
-      background: var(--surface); border: 1px solid var(--border);
-      border-left: 3px solid var(--orange);
-      border-radius: 8px; padding: 14px 16px; margin-bottom: 8px;
+      background:var(--surface); border:1px solid #3a2a0a; border-left:3px solid var(--orange);
+      border-radius:6px; padding:12px 14px; margin-bottom:8px;
     }
-    .review-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
-    .review-agent { font-weight: 600; color: var(--orange); font-size: 12px; }
-    .review-time  { font-size: 11px; color: var(--muted); }
-    .review-reason { color: var(--text); font-size: 12px; margin-bottom: 10px; }
-    .review-actions { display: flex; gap: 8px; }
+    .review-meta { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+    .review-agent { font-weight:700; color:var(--orange); font-size:12px; }
+    .review-time  { font-size:10px; color:var(--muted); }
+    .review-reason { color:#ccc; font-size:12px; margin-bottom:8px; }
+    .review-actions { display:flex; gap:8px; }
     .btn-escalate {
-      background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.25); color: var(--red);
-      font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 600;
-      padding: 5px 12px; border-radius: 6px; cursor: pointer;
+      background:transparent; border:1px solid #5a1a1a; color:var(--red);
+      font-family:inherit; font-size:10px; font-weight:600; padding:4px 10px;
+      border-radius:4px; cursor:pointer; letter-spacing:.06em;
     }
-    .btn-escalate:hover { background: rgba(239,68,68,.18); }
+    .btn-escalate:hover { background:#2b0d0d; }
     .btn-clear {
-      background: transparent; border: 1px solid var(--border); color: var(--muted);
-      font-family: 'Inter', sans-serif; font-size: 11px; padding: 5px 12px;
-      border-radius: 6px; cursor: pointer;
+      background:transparent; border:1px solid var(--border); color:var(--muted);
+      font-family:inherit; font-size:10px; padding:4px 10px;
+      border-radius:4px; cursor:pointer;
     }
-    .btn-clear:hover { color: var(--text); border-color: var(--border2); }
+    .btn-clear:hover { color:var(--text); border-color:var(--muted); }
 
-    /* ── alert log ── */
+    /* alert log */
+    .alert-log { border-top:1px solid var(--border); padding-top:24px; }
     .alert-entry {
-      background: var(--surface); border: 1px solid var(--border);
-      border-left: 3px solid var(--red);
-      border-radius: 8px; padding: 14px 16px; margin-bottom: 8px;
+      background:var(--surface); border:1px solid #2b0d0d; border-left:3px solid var(--red);
+      border-radius:6px; padding:12px 14px; margin-bottom:8px;
     }
-    .alert-entry.dismissed { opacity: .3; }
-    .alert-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
-    .alert-agent { font-weight: 600; color: var(--red); font-size: 12px; }
-    .alert-time  { font-size: 11px; color: var(--muted); }
-    .alert-reason { color: var(--text); margin-bottom: 8px; font-size: 12px; line-height: 1.5; }
-    .alert-actions { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
+    .alert-entry.dismissed { opacity:.35; }
+    .alert-meta { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+    .alert-agent { font-weight:700; color:var(--red); font-size:12px; }
+    .alert-time  { font-size:10px; color:var(--muted); }
+    .alert-reason { color:#ccc; margin-bottom:8px; font-size:12px; }
+    .alert-actions { display:flex; gap:6px; align-items:center; margin-top:8px; }
     .btn-rec {
-      background: rgba(245,78,0,.08); border: 1px solid rgba(245,78,0,.2); color: var(--accent);
-      font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 500;
-      padding: 4px 10px; border-radius: 6px; cursor: pointer;
+      background:transparent; border:1px solid #3a2a0a; color:var(--orange);
+      font-family:inherit; font-size:10px; font-weight:600; padding:4px 10px;
+      border-radius:4px; cursor:pointer; letter-spacing:.04em;
     }
-    .btn-rec:hover, .btn-rec.open { background: rgba(245,78,0,.15); }
+    .btn-rec:hover { background:#2b1d0d; }
+    .btn-rec.open  { background:#2b1d0d; }
     .btn-dismiss-sm {
-      background: transparent; border: 1px solid var(--border); color: var(--muted);
-      font-family: 'Inter', sans-serif; font-size: 11px; padding: 4px 10px;
-      border-radius: 6px; cursor: pointer;
+      background:transparent; border:1px solid var(--border); color:var(--muted);
+      font-family:inherit; font-size:10px; padding:4px 10px; border-radius:4px; cursor:pointer;
     }
-    .btn-dismiss-sm:hover { color: var(--text); border-color: var(--border2); }
+    .btn-dismiss-sm:hover { color:var(--text); border-color:var(--muted); }
     .btn-delete-sm {
-      background: transparent; border: 1px solid rgba(239,68,68,.2); color: var(--red);
-      font-family: 'Inter', sans-serif; font-size: 11px; padding: 4px 10px;
-      border-radius: 6px; cursor: pointer;
+      background:transparent; border:1px solid #3a1a1a; color:var(--red);
+      font-family:inherit; font-size:10px; padding:4px 10px; border-radius:4px; cursor:pointer;
     }
-    .btn-delete-sm:hover { background: rgba(239,68,68,.08); }
-    .rec-panel { display: none; margin-top: 10px; padding: 12px; background: var(--surface2); border-radius: 7px; border: 1px solid var(--border); }
-    .rec-panel.open { display: block; }
-    .alert-rec { color: var(--muted); font-size: 11px; line-height: 1.7; }
-    .empty-log { color: var(--muted2); font-size: 12px; padding: 20px 0; }
-
-    /* ── fixable rec card ── */
-    .alert-rec-card {
-      margin-top: 10px; padding: 12px 14px; border-radius: 7px;
-      background: rgba(245,78,0,.05); border: 1px solid rgba(245,78,0,.15);
-      font-size: 11px; line-height: 1.7; color: var(--text);
-    }
-    .alert-rec-card strong { color: var(--accent); display: block; margin-bottom: 6px; font-size: 11px; font-weight: 600; }
-    .alert-card-btns { display: flex; gap: 8px; margin-top: 12px; }
-    .btn-investigate {
-      background: var(--blue); color: #fff; border: none;
-      border-radius: 6px; padding: 6px 14px; font-family: 'Inter', sans-serif;
-      font-size: 11px; font-weight: 600; cursor: pointer;
-    }
-    .btn-accept {
-      background: transparent; color: var(--muted);
-      border: 1px solid var(--border); border-radius: 6px;
-      padding: 6px 14px; font-family: 'Inter', sans-serif; font-size: 11px; cursor: pointer;
-    }
-    .btn-accept:hover { color: var(--text); border-color: var(--border2); }
-
-    /* ── toast ── */
-    .toast-container { position: fixed; top: 16px; right: 16px; z-index: 200; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
-    .toast {
-      background: #1a1a1a; border: 1px solid rgba(239,68,68,.35);
-      border-radius: 12px; padding: 14px 16px;
-      width: 320px; box-shadow: 0 16px 48px rgba(0,0,0,.8), 0 0 0 1px rgba(239,68,68,.05);
-      pointer-events: all; animation: slideIn .25s cubic-bezier(.22,1,.36,1);
-      display: flex; flex-direction: column; gap: 6px;
-    }
-    .toast.hiding { animation: slideOut .2s ease forwards; }
-    @keyframes slideIn { from { opacity:0; transform: translateX(340px) scale(.95); } to { opacity:1; transform: translateX(0) scale(1); } }
-    @keyframes slideOut { from { opacity:1; transform: translateX(0); } to { opacity:0; transform: translateX(340px); } }
-    .toast-top { display: flex; align-items: center; gap: 8px; }
-    .toast-icon { font-size: 15px; }
-    .toast-title { font-size: 12px; font-weight: 600; color: var(--red); flex: 1; }
-    .toast-close { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 0; line-height: 1; }
-    .toast-close:hover { color: var(--text); }
-    .toast-agent { font-size: 11px; color: var(--muted); font-family: monospace; }
-    .toast-reason { font-size: 12px; color: var(--text); line-height: 1.5; }
-    .toast-btns { display: flex; gap: 8px; margin-top: 4px; }
-    .toast-btn-pause {
-      flex: 1; background: var(--accent); color: #fff; border: none;
-      border-radius: 7px; padding: 7px; font-family: 'Inter', sans-serif;
-      font-size: 11px; font-weight: 600; cursor: pointer;
-    }
-    .toast-btn-dismiss {
-      flex: 1; background: var(--surface2); color: var(--muted);
-      border: 1px solid var(--border); border-radius: 7px; padding: 7px;
-      font-family: 'Inter', sans-serif; font-size: 11px; cursor: pointer;
-    }
-    .toast-btn-dismiss:hover { color: var(--text); }
+    .btn-delete-sm:hover { background:#2b0d0d; }
+    .rec-panel { display:none; margin-top:10px; padding:10px 12px; background:var(--surface2); border-radius:6px; border:1px solid var(--border); }
+    .rec-panel.open { display:block; }
+    .alert-rec { color:var(--muted); font-size:11px; line-height:1.6; }
+    .empty-log { color:var(--muted); font-size:12px; padding:12px 0; }
   </style>
 </head>
 <body>
 
-<div class="toast-container" id="toast-container"></div>
-
-<!-- sidebar -->
-<div class="sidebar">
-  <div class="sidebar-logo">
-    <div class="logo-mark">S</div>
-    <div class="logo-text">Self<span>Audit</span></div>
+<div class="header">
+  <div class="logo">Self<span>Audit</span></div>
+  <div class="stats">
+    <div class="stat"><label>total cost</label><div class="val" id="h-cost">$0.0000</div></div>
+    <div class="stat"><label>alerts</label><div class="val danger" id="h-alerts">0</div></div>
+    <div class="stat"><label>done</label><div class="val good" id="h-done">0</div></div>
+    <div class="stat"><label>running</label><div class="val" id="h-running">0</div></div>
+    <div class="stat"><label>paused</label><div class="val" id="h-paused" style="color:var(--blue)">0</div></div>
   </div>
-
-  <div class="sidebar-section">Monitor</div>
-  <a class="nav-item active" onclick="showSection('agents')">
-    <span class="nav-icon">◈</span> Agents
-    <span class="nav-badge" id="nav-alerts" style="display:none">0</span>
-  </a>
-  <a class="nav-item" onclick="showSection('review')">
-    <span class="nav-icon">⚑</span> Review Queue
-    <span class="nav-badge orange" id="nav-review" style="display:none">0</span>
-  </a>
-  <a class="nav-item" onclick="showSection('alerts')">
-    <span class="nav-icon">⛔</span> Alert Log
-    <span class="nav-badge" id="nav-alertlog" style="display:none">0</span>
-  </a>
-
-  <div class="sidebar-section" style="margin-top:8px">Config</div>
-  <a class="nav-item" onclick="document.getElementById('settings-panel').classList.toggle('open')">
-    <span class="nav-icon">⚙</span> Settings
-  </a>
-
-  <div class="sidebar-bottom">
-    <button class="btn-sm" id="undo-btn" onclick="undo()" disabled title="" style="text-align:left">↩ Undo</button>
-    <div class="live-status">
-      <div class="live-dot" id="live-dot"></div>
-      <span class="live-label" id="live-label">connecting...</span>
-    </div>
-  </div>
+  <button class="undo-btn" id="undo-btn" onclick="undo()" disabled title="">↩ Undo</button>
+  <button class="settings-toggle" onclick="document.getElementById('settings-panel').classList.toggle('open')">⚙ Settings</button>
+  <div class="live" id="live-dot"></div>
 </div>
 
-<!-- page -->
-<div class="page">
-  <div class="topbar">
-    <div class="topbar-title" id="topbar-title">Agents</div>
-    <div class="topbar-actions">
-      <span style="font-size:11px;color:var(--muted)" id="topbar-sub">real-time agent monitoring</span>
-    </div>
+<div class="settings-panel" id="settings-panel">
+  <span>global defaults</span>
+  <div class="threshold-group">
+    <label>retries</label>
+    <input type="number" id="t-retry" value="3" min="1">
+  </div>
+  <div class="threshold-group">
+    <label>cost ($)</label>
+    <input type="number" id="t-cost" value="0.05" min="0.001" step="0.01">
+  </div>
+  <div class="threshold-group">
+    <label>time (s)</label>
+    <input type="number" id="t-time" value="30" min="5">
+  </div>
+  <button class="btn-apply" onclick="applyThresholds()">Apply</button>
+  <div style="width:1px;background:var(--border);margin:0 4px;height:20px"></div>
+  <span>per-agent budget</span>
+  <div class="threshold-group">
+    <input type="text" id="b-agent" placeholder="agent-id" style="width:120px">
+  </div>
+  <div class="threshold-group">
+    <label>cap ($)</label>
+    <input type="number" id="b-cap" value="0.10" min="0.01" step="0.01">
+  </div>
+  <button class="btn-apply" style="background:var(--orange)" onclick="applyBudget()">Set</button>
+  <span id="budget-msg" style="font-size:10px;transition:opacity .5s"></span>
+</div>
+
+<div class="main">
+  <div class="section-title">agents</div>
+  <div class="grid" id="grid">
+    <div class="card"><div class="card-top"><span class="agent-name">waiting for agents...</span></div></div>
+  </div>
+  <div class="review-queue">
+    <div class="section-title">flagged for review</div>
+    <div id="review-queue"><div class="empty-log">no flags yet — watcher will flag agents in the ambiguous zone</div></div>
   </div>
 
-  <!-- insight stat row -->
-  <div class="insight-row">
-    <div class="insight-cell">
-      <div class="insight-label">Total Cost</div>
-      <div class="insight-value" id="h-cost">$0.0000</div>
-    </div>
-    <div class="insight-cell">
-      <div class="insight-label">Active Alerts</div>
-      <div class="insight-value red" id="h-alerts">0</div>
-    </div>
-    <div class="insight-cell">
-      <div class="insight-label">Running</div>
-      <div class="insight-value" id="h-running">0</div>
-    </div>
-    <div class="insight-cell">
-      <div class="insight-label">Done</div>
-      <div class="insight-value green" id="h-done">0</div>
-    </div>
-    <div class="insight-cell">
-      <div class="insight-label">Paused</div>
-      <div class="insight-value blue" id="h-paused">0</div>
-    </div>
-    <div class="insight-cell">
-      <div class="insight-label">Est. Saved</div>
-      <div class="insight-value green" id="h-saved">$0.00</div>
-    </div>
-    <div class="insight-cell">
-      <div class="insight-label">Redis Memory</div>
-      <div class="insight-value orange" id="h-memory">0</div>
-    </div>
-  </div>
-
-  <div class="settings-panel" id="settings-panel">
-    <span>Global thresholds</span>
-    <div class="threshold-group"><label>retries</label><input type="number" id="t-retry" value="3" min="1"></div>
-    <div class="threshold-group"><label>cost ($)</label><input type="number" id="t-cost" value="0.05" min="0.001" step="0.01"></div>
-    <div class="threshold-group"><label>time (s)</label><input type="number" id="t-time" value="30" min="5"></div>
-    <button class="btn-apply" onclick="applyThresholds()">Apply</button>
-    <div style="width:1px;background:var(--border);margin:0 4px;height:20px"></div>
-    <span>Per-agent budget</span>
-    <div class="threshold-group"><input type="text" id="b-agent" placeholder="agent-id" style="width:110px"></div>
-    <div class="threshold-group"><label>cap ($)</label><input type="number" id="b-cap" value="0.10" min="0.01" step="0.01"></div>
-    <button class="btn-apply" onclick="applyBudget()">Set</button>
-    <span id="budget-msg" style="font-size:10px;transition:opacity .5s"></span>
-  </div>
-
-  <div class="main">
-    <div class="section-wrap" id="section-agents">
-      <div class="section-header">
-        <span class="section-title">Agents</span>
-        <span class="section-count" id="agent-count">0</span>
-      </div>
-      <div class="grid" id="grid">
-        <div class="card"><div class="card-top"><span class="agent-name">waiting for agents...</span></div></div>
-      </div>
-    </div>
-
-    <div class="section-wrap" id="section-review" style="display:none">
-      <div class="section-header">
-        <span class="section-title">Flagged for Review</span>
-        <span class="section-count" id="review-count">0</span>
-      </div>
-      <div id="review-queue"><div class="empty-log">no flags yet — watcher will flag agents in the ambiguous zone</div></div>
-    </div>
-
-    <div class="section-wrap" id="section-alerts" style="display:none">
-      <div class="section-header">
-        <span class="section-title">Alert Log</span>
-        <span class="section-count" id="alert-count">0</span>
-      </div>
-      <div id="alert-log"><div class="empty-log">no alerts yet</div></div>
-    </div>
+  <div class="alert-log">
+    <div class="section-title">alert log</div>
+    <div id="alert-log"><div class="empty-log">no alerts yet</div></div>
   </div>
 </div>
 
 <script>
   const source = new EventSource('/stream');
-  const _shownModals = new Set();
-
-  const SECTIONS = {
-    agents: { el: 'section-agents', title: 'Agents', sub: 'real-time agent monitoring' },
-    review: { el: 'section-review', title: 'Review Queue', sub: 'agents flagged for human review' },
-    alerts: { el: 'section-alerts', title: 'Alert Log', sub: 'all triggered alerts' },
-  };
-  let _activeSection = 'agents';
-  function showSection(name) {
-    _activeSection = name;
-    Object.keys(SECTIONS).forEach(k => {
-      document.getElementById(SECTIONS[k].el).style.display = k === name ? '' : 'none';
-    });
-    document.getElementById('topbar-title').textContent = SECTIONS[name].title;
-    document.getElementById('topbar-sub').textContent = SECTIONS[name].sub;
-    document.querySelectorAll('.nav-item').forEach((el, i) => {
-      el.classList.toggle('active', ['agents','review','alerts','settings'][i] === name);
-    });
-  }
 
   source.onmessage = (e) => {
     const data = JSON.parse(e.data);
@@ -542,75 +312,9 @@ HTML = """
     renderGrid(data.agents);
     renderReviewQueue(data.flagged);
     renderAlertLog(data.alerts);
-    document.getElementById('live-dot').className = 'live-dot';
-    document.getElementById('live-label').textContent = 'live';
-    document.getElementById('agent-count').textContent = data.agents.length;
-    const rc = (data.flagged||[]).length, ac = (data.alerts||[]).length;
-    document.getElementById('review-count').textContent = rc;
-    document.getElementById('alert-count').textContent = ac;
-    const nb = document.getElementById('nav-alerts');
-    const nr = document.getElementById('nav-review');
-    const na = document.getElementById('nav-alertlog');
-    nb.style.display = data.alert_count > 0 ? '' : 'none'; nb.textContent = data.alert_count;
-    nr.style.display = rc > 0 ? '' : 'none'; nr.textContent = rc;
-    na.style.display = ac > 0 ? '' : 'none'; na.textContent = ac;
-    // trigger modal for new non-fixable alerts
-    data.agents.forEach(a => {
-      if (a.alerted && !a.fixable && !a.paused && !_shownModals.has(a.agent_id)) {
-        _shownModals.add(a.agent_id);
-        showToast(a.agent_id, a.alert_reason);
-      }
-    });
+    document.getElementById('live-dot').className = 'live';
   };
-  source.onerror = () => {
-    document.getElementById('live-dot').className = 'live-dot off';
-    document.getElementById('live-label').textContent = 'disconnected';
-  };
-
-  // request browser notification permission on load
-  if ('Notification' in window && Notification.permission === 'default') {
-    Notification.requestPermission();
-  }
-
-  function showToast(agentId, reason) {
-    // OS-level notification only when user is on a different tab
-    if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
-      const n = new Notification('⛔ Non-Recoverable Alert — ' + agentId, {
-        body: reason || 'This agent encountered a non-recoverable error.',
-        icon: 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⛔</text></svg>',
-        tag: agentId,
-      });
-      n.onclick = () => { window.focus(); n.close(); };
-    }
-    // in-page toast (visible when on dashboard tab)
-    const id = 'toast-' + agentId.replace(/[^a-z0-9]/gi,'_');
-    if (document.getElementById(id)) return;
-    const container = document.getElementById('toast-container');
-    const toast = document.createElement('div');
-    toast.className = 'toast';
-    toast.id = id;
-    toast.innerHTML = `
-      <div class="toast-top">
-        <span class="toast-icon">⛔</span>
-        <span class="toast-title">Non-Recoverable Alert</span>
-        <button class="toast-close" onclick="dismissToast('${id}')">✕</button>
-      </div>
-      <div class="toast-agent">${agentId}</div>
-      <div class="toast-reason">${reason || 'This agent encountered a non-recoverable error.'}</div>
-      <div class="toast-btns">
-        <button class="toast-btn-pause" onclick="api('pause','${agentId}'); dismissToast('${id}')">⏸ Pause Agent</button>
-        <button class="toast-btn-dismiss" onclick="dismissToast('${id}')">Ignore</button>
-      </div>
-    `;
-    container.appendChild(toast);
-    setTimeout(() => dismissToast(id), 8000);
-  }
-  function dismissToast(id) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.classList.add('hiding');
-    setTimeout(() => el.remove(), 300);
-  }
+  source.onerror = () => { document.getElementById('live-dot').className = 'live off'; };
 
   function updateHeader(d) {
     document.getElementById('h-cost').textContent    = '$' + d.total_cost;
@@ -618,8 +322,6 @@ HTML = """
     document.getElementById('h-done').textContent    = d.done_count;
     document.getElementById('h-running').textContent = d.running_count;
     document.getElementById('h-paused').textContent  = d.paused_count;
-    document.getElementById('h-saved').textContent   = '$' + d.cost_saved;
-    document.getElementById('h-memory').textContent  = d.memory_count + ' cases';
   }
 
   function renderGrid(agents) {
@@ -685,21 +387,8 @@ HTML = """
 
     const modelTag     = a.model ? `<div style="font-size:9px;color:var(--muted);margin-top:2px">${a.model}</div>` : '';
     const alertCallout = a.alert_reason ? `<div class="callout red">${a.alert_reason}</div>` : '';
-    const fixableRec   = (a.alerted && a.fixable && a.alert_recommendation) ? (() => {
-      const rec = a.alert_recommendation;
-      const headline = typeof rec === 'object' ? (rec.headline || '') : rec;
-      const steps = typeof rec === 'object' && rec.steps ? rec.steps.map((s,i) => `<div style="margin:2px 0">${i+1}. ${s}</div>`).join('') : '';
-      return `<div class="alert-rec-card">
-        <strong>💡 suggestions</strong>
-        <div style="margin-bottom:6px">${headline}</div>${steps}
-        <div class="alert-card-btns">
-          <button class="btn-investigate" onclick="api('pause','${a.agent_id}')">⏸ Pause &amp; Investigate</button>
-          <button class="btn-accept" onclick="this.closest('.alert-rec-card').remove()">Accept Risk</button>
-        </div>
-      </div>`;
-    })() : '';
     const flagCallout  = a.flagged && !a.alert_reason ? `<div class="callout orange">⚠ flagged for human review</div>` : '';
-    const pauseCallout = a.paused ? `<div class="callout blue">⏸ paused — not accumulating cost</div>` : '';
+    const pauseCallout = a.paused ? `<div class="callout blue">⏸ paused</div>` : '';
     const projLine     = (!a.paused && !a.completed && parseFloat(a.proj_1h) > 0.01)
       ? `<div style="font-size:10px;color:#555;margin-top:6px">at current rate: <span style="color:#888">$${a.proj_1h}/hr</span>${a.budget?` · cap <span style="color:#aaa">$${a.budget}</span>`:''}</div>` : '';
 
@@ -720,7 +409,7 @@ HTML = """
       </div>
       <div class="bar-wrap"><div class="bar ${barCls}" style="width:${costPct}%"></div></div>
       <div class="actions">${actionsHTML}</div>
-      ${alertCallout}${fixableRec}${flagCallout}${pauseCallout}${projLine}
+      ${alertCallout}${flagCallout}${pauseCallout}${projLine}
       ${notesHTML ? `<div class="notes-list" style="margin-top:8px">${notesHTML}</div>` : ''}
       <div class="controls">
         ${pauseBtn}
@@ -1026,15 +715,6 @@ HTML = """
 """
 
 
-def _redis_memory_count():
-    try:
-        from peer_judge import _redis_client, _INDEX_KEY
-        r = _redis_client()
-        return int(r.scard(_INDEX_KEY)) if r else 0
-    except Exception:
-        return 0
-
-
 def _snapshot(watcher):
     import datetime as dt
     agents = []
@@ -1069,27 +749,25 @@ def _snapshot(watcher):
             })
 
         agents.append({
-            "agent_id":             agent_id,
-            "status":               status,
-            "cost":                 f"{state.cumulative_cost:.4f}",
-            "progress":             state.progress_score,
-            "retries":              state.max_retry_count,
-            "elapsed":              f"{state.elapsed:.1f}",
-            "recent_actions":       [{"action": e.action, "success": e.success, "cost": f"{e.cost_usd:.4f}"} for e in state.events[-4:]],
-            "alerted":              state.alerted,
-            "paused":               state.paused,
-            "flagged":              state.flagged,
-            "notes":                [{"i": i, "text": n} for i, n in enumerate(state.notes)],
-            "alert_reason":         matched.reason if matched else None,
-            "alert_recommendation": matched.recommendation if matched else None,
-            "fixable":              state.progress_score > 0,
-            "proj_1h":              f"{state.projected_cost_1h:.4f}",
-            "budget":               f"{state.budget_usd:.2f}" if state.budget_usd else None,
-            "model":                state.model,
-            "progress_mode":        state.progress_mode,
-            "t_retry":              state.retry_threshold,
-            "t_cost":               state.cost_threshold,
-            "t_time":               state.time_threshold,
+            "agent_id":       agent_id,
+            "status":         status,
+            "cost":           f"{state.cumulative_cost:.4f}",
+            "progress":       state.progress_score,
+            "retries":        state.max_retry_count,
+            "elapsed":        f"{state.elapsed:.1f}",
+            "recent_actions": [{"action": e.action, "success": e.success, "cost": f"{e.cost_usd:.4f}"} for e in state.events[-4:]],
+            "alerted":        state.alerted,
+            "paused":         state.paused,
+            "flagged":        state.flagged,
+            "notes":          [{"i": i, "text": n} for i, n in enumerate(state.notes)],
+            "alert_reason":   matched.reason if matched else None,
+            "proj_1h":        f"{state.projected_cost_1h:.4f}",
+            "budget":         f"{state.budget_usd:.2f}" if state.budget_usd else None,
+            "model":          state.model,
+            "progress_mode":  state.progress_mode,
+            "t_retry":        state.retry_threshold,
+            "t_cost":         state.cost_threshold,
+            "t_time":         state.time_threshold,
         })
 
     import datetime
@@ -1114,7 +792,6 @@ def _snapshot(watcher):
         "running_count": running_count,
         "paused_count":  paused_count,
         "cost_saved":    f"{getattr(watcher, 'cost_saved_usd', 0.0):.2f}",
-        "memory_count":  _redis_memory_count(),
     }
 
 
@@ -1140,10 +817,20 @@ def stream():
 
         if _watcher:
             # local mode: use threading.Event
+            # NEW: every snapshot pushed to the browser is also pushed to
+            # Redis, so a viewer-mode dashboard on another machine sees
+            # the same live data via redis_store.get_snapshot()/subscribe().
             while True:
-                _watcher._dirty.wait(timeout=2.0)
-                _watcher._dirty.clear()
-                yield f"data: {json.dumps(_snapshot(_watcher))}\n\n"
+                changed = _watcher._dirty.wait(timeout=2.0)
+                if changed and _watcher.states:
+                    _watcher._dirty.clear()
+                    snap = _snapshot(_watcher)
+                    try:
+                        import redis_store as _rs
+                        _rs.push_snapshot(snap)
+                    except Exception:
+                        pass
+                    yield f"data: {json.dumps(snap)}\n\n"
         else:
             # viewer mode (friend's machine): subscribe to Redis pub/sub
             try:
@@ -1289,7 +976,7 @@ def api_clear_flag():
 @app.route("/api/thresholds", methods=["POST"])
 def api_thresholds():
     d = request.json
-    old = (_watcher.retry_threshold, _watcher.cost_threshold, _watcher.time_threshold)
+    old = (_watcher._retry_threshold, _watcher._cost_threshold, _watcher._time_threshold)
     _watcher.set_thresholds(retry=d.get("retry"), cost=d.get("cost"), time=d.get("time"))
     _push_undo("set global thresholds",
                lambda o=old: _watcher.set_thresholds(retry=o[0], cost=o[1], time=o[2]))
