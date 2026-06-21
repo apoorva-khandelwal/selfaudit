@@ -5,9 +5,9 @@ output is actually on-task — catching subtle drift that numeric signals miss.
 Only triggers when signals are AMBIGUOUS: some progress but also high cost/retries.
 Never runs on clearly healthy or clearly broken agents (waste of money).
 
-Redis/RedisVL integration: every verdict is embedded and stored in a vector
-index. Before calling the LLM, we retrieve the most similar past cases so the
-judge isn't flying blind — it learns from prior runs.
+Redis integration: every verdict is embedded and stored as a Redis hash.
+Before calling the LLM, we retrieve the most similar past cases via cosine
+similarity so the judge learns from prior runs.
 
 Requires ANTHROPIC_API_KEY in environment.
 Redis connection requires REDIS_HOST / REDIS_PORT / REDIS_USERNAME / REDIS_PASSWORD.
@@ -21,49 +21,21 @@ import numpy as np
 
 
 _EMBED_DIM = 128
+_KEY_PREFIX = "selfaudit:judgment:"
+_INDEX_KEY  = "selfaudit:judgment:index"
 
 
-def _embed(text: str) -> list[float]:
+def _embed(text: str) -> np.ndarray:
+    """Character-trigram hash embedding — fast, deterministic, no ML model needed."""
     vec = np.zeros(_EMBED_DIM, dtype=np.float32)
     text = text.lower()
     for i in range(len(text) - 2):
-        trigram = text[i:i + 3]
-        h = int(hashlib.md5(trigram.encode()).hexdigest(), 16)
+        h = int(hashlib.md5(text[i:i+3].encode()).hexdigest(), 16)
         vec[h % _EMBED_DIM] += 1.0
     norm = np.linalg.norm(vec)
     if norm > 0:
         vec /= norm
-    return vec.tolist()
-
-
-_INDEX_NAME = "selfaudit:judgments"
-_PREFIX = "selfaudit:judgment:"
-
-_SCHEMA = {
-    "index": {
-        "name": _INDEX_NAME,
-        "prefix": _PREFIX,
-        "storage_type": "json",
-    },
-    "fields": [
-        {"name": "agent_id",         "type": "tag"},
-        {"name": "on_task",          "type": "tag"},
-        {"name": "confidence",       "type": "tag"},
-        {"name": "reason",           "type": "text"},
-        {"name": "task_description", "type": "text"},
-        {"name": "timestamp",        "type": "numeric"},
-        {
-            "name": "embedding",
-            "type": "vector",
-            "attrs": {
-                "algorithm": "flat",
-                "dims": _EMBED_DIM,
-                "distance_metric": "cosine",
-                "datatype": "float32",
-            },
-        },
-    ],
-}
+    return vec
 
 
 def _redis_client():
@@ -72,17 +44,13 @@ def _redis_client():
         from dotenv import load_dotenv
         _here = os.path.dirname(os.path.abspath(__file__))
         load_dotenv(os.path.join(_here, ".env"))
-        host = os.getenv("REDIS_HOST", "localhost")
-        port = int(os.getenv("REDIS_PORT", 6379))
-        use_ssl = host.endswith(".redis.io") or port != 6379
         r = redis_lib.Redis(
-            host=host,
-            port=port,
+            host=os.getenv("REDIS_HOST", "localhost"),
+            port=int(os.getenv("REDIS_PORT", 6379)),
             username=os.getenv("REDIS_USERNAME"),
             password=os.getenv("REDIS_PASSWORD"),
             decode_responses=False,
-            ssl=use_ssl,
-            ssl_cert_reqs=None,
+            ssl=False,
             socket_connect_timeout=5,
             socket_timeout=5,
         )
@@ -92,56 +60,49 @@ def _redis_client():
         return None
 
 
-def _get_index():
-    try:
-        from redisvl.index import SearchIndex
-        r = _redis_client()
-        if r is None:
-            return None
-        idx = SearchIndex.from_dict(_SCHEMA, redis_client=r)
-        try:
-            idx.create(overwrite=False)
-        except Exception:
-            pass
-        return idx
-    except Exception:
-        return None
-
-
-def _store_verdict(idx, agent_id: str, task_description: str,
+def _store_verdict(r, agent_id: str, task_description: str,
                    recent_output: str, verdict: dict) -> None:
+    """Embed and store a judgment in Redis."""
     try:
-        text = f"{task_description}\n{recent_output}"
-        vec = _embed(text)
+        vec = _embed(f"{task_description}\n{recent_output}")
         key_suffix = hashlib.md5(f"{agent_id}{time.time()}".encode()).hexdigest()[:12]
-        doc = {
-            "agent_id": agent_id,
-            "on_task": str(verdict.get("on_task", True)).lower(),
-            "confidence": verdict.get("confidence", "low"),
-            "reason": verdict.get("reason", ""),
+        key = f"{_KEY_PREFIX}{key_suffix}"
+        r.hset(key, mapping={
+            "agent_id":         agent_id,
+            "on_task":          str(verdict.get("on_task", True)).lower(),
+            "confidence":       verdict.get("confidence", "low"),
+            "reason":           verdict.get("reason", ""),
             "task_description": task_description[:500],
-            "timestamp": time.time(),
-            "embedding": np.array(vec, dtype=np.float32).tobytes(),
-        }
-        idx.load([doc], keys=[f"{_PREFIX}{key_suffix}"])
+            "timestamp":        str(time.time()),
+            "embedding":        vec.tobytes(),
+        })
+        # track all keys in a set so we can scan them
+        r.sadd(_INDEX_KEY, key)
     except Exception:
         pass
 
 
-def _retrieve_similar(idx, task_description: str, recent_output: str,
+def _retrieve_similar(r, task_description: str, recent_output: str,
                       top_k: int = 3) -> list[dict]:
+    """Fetch all stored judgments and return top_k by cosine similarity."""
     try:
-        from redisvl.query import VectorQuery
-        text = f"{task_description}\n{recent_output}"
-        vec = np.array(_embed(text), dtype=np.float32).tobytes()
-        query = VectorQuery(
-            vector=vec,
-            vector_field_name="embedding",
-            return_fields=["agent_id", "on_task", "confidence",
-                           "reason", "task_description", "timestamp"],
-            num_results=top_k,
-        )
-        return idx.query(query)
+        query_vec = _embed(f"{task_description}\n{recent_output}")
+        keys = r.smembers(_INDEX_KEY)
+        scored = []
+        for key in keys:
+            raw = r.hgetall(key)
+            if not raw or b"embedding" not in raw:
+                continue
+            stored_vec = np.frombuffer(raw[b"embedding"], dtype=np.float32)
+            score = float(np.dot(query_vec, stored_vec))
+            scored.append((score, {
+                "agent_id":   raw.get(b"agent_id", b"").decode(),
+                "on_task":    raw.get(b"on_task", b"").decode(),
+                "confidence": raw.get(b"confidence", b"").decode(),
+                "reason":     raw.get(b"reason", b"").decode(),
+            }))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [d for _, d in scored[:top_k]]
     except Exception:
         return []
 
@@ -160,8 +121,15 @@ def _format_similar(similar: list[dict]) -> str:
     return "\n".join(lines)
 
 
+# ── public API ─────────────────────────────────────────────────────────────────
+
 def should_peer_judge(progress_score: int, max_retry_count: int,
                       cumulative_cost: float, cost_threshold: float) -> bool:
+    """
+    Only invoke the peer judge in the ambiguous middle zone:
+    - Agent has made SOME progress (not clearly broken)
+    - But cost or retries are elevated (not clearly healthy)
+    """
     has_some_progress = progress_score > 0
     elevated_cost = cumulative_cost > cost_threshold * 0.8
     elevated_retries = max_retry_count >= 2
@@ -170,10 +138,23 @@ def should_peer_judge(progress_score: int, max_retry_count: int,
 
 def judge(agent_id: str, task_description: str, recent_output: str,
           progress_score: int, cumulative_cost: float) -> dict:
-    idx = _get_index()
-    similar = _retrieve_similar(idx, task_description, recent_output) if idx else []
+    """
+    Ask a cheap LLM to read the agent's actual output and decide if it's on-task.
+
+    Before calling the LLM, queries Redis for similar past judgments so the
+    judge has memory of prior cases. After the verdict, stores the result for
+    future lookups.
+
+    Returns:
+        {"on_task": bool, "confidence": "high"|"medium"|"low",
+         "reason": str, "recommendation": str}
+    """
+    # ── Redis memory: retrieve similar past cases ──────────────────────────────
+    r = _redis_client()
+    similar = _retrieve_similar(r, task_description, recent_output) if r else []
     memory_context = _format_similar(similar)
 
+    # ── LLM call ──────────────────────────────────────────────────────────────
     try:
         import anthropic
         client = anthropic.Anthropic()
@@ -222,8 +203,9 @@ Respond with ONLY a JSON object (no markdown):
                    "reason": f"peer judge error: {e}",
                    "recommendation": ""}
 
-    if idx is not None:
-        _store_verdict(idx, agent_id, task_description, recent_output, verdict)
+    # ── Redis memory: store this verdict for future retrieval ──────────────────
+    if r is not None:
+        _store_verdict(r, agent_id, task_description, recent_output, verdict)
 
     verdict["_similar_cases_found"] = len(similar)
     return verdict
