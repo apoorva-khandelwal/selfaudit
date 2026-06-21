@@ -42,9 +42,10 @@ def run_slow(watcher: Watcher, agent_id: str):
 
 
 def run_fast_fail(watcher: Watcher, agent_id: str):
-    time.sleep(0.2)
-    with watcher.trace(agent_id, "authenticate", model="claude-sonnet-4-6") as t:
-        t.fail(cost_usd=round(random.uniform(0.001, 0.003), 4))
+    for _ in range(5):
+        time.sleep(0.3)
+        with watcher.trace(agent_id, "authenticate", model="claude-sonnet-4-6") as t:
+            t.fail(cost_usd=round(random.uniform(0.001, 0.003), 4))
 
 
 def run_intermittent(watcher: Watcher, agent_id: str):

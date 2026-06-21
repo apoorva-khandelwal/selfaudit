@@ -26,6 +26,12 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+except ImportError:
+    pass
+
 from models import MODELS, get_cheaper_alternatives, format_tradeoffs
 
 _ANTHROPIC_PRICES = {
@@ -213,7 +219,7 @@ class Watcher:
                  on_alert=None):
         self.states: Dict[str, _State] = {}
         self.alerts: List[Alert] = []
-        self.cost_saved_usd: float = 0.0  # estimated savings from pausing alerted agents
+        self.cost_saved_usd: float = 0.0
         self._lock             = threading.Lock()
         self._dirty            = threading.Event()
         self._retry_threshold  = retry_threshold
@@ -222,6 +228,7 @@ class Watcher:
         self._task_description = task_description
         self._progress_mode    = progress_mode
         self._on_alert         = on_alert or self._print_alert
+        self._last_eval: Dict[str, float] = {}  # agent_id -> last claude call timestamp
 
     # ── public control API ─────────────────────────────────────────────────────
 
@@ -491,8 +498,31 @@ class Watcher:
             retry_t = state.retry_threshold if state and state.retry_threshold is not None else self._retry_threshold
             cost_t  = state.cost_threshold  if state and state.cost_threshold  is not None else self._cost_threshold
             time_t  = state.time_threshold  if state and state.time_threshold  is not None else self._time_threshold
+            if not state or state.alerted or state.completed or state.paused:
+                return
+            recent = [{"action": e.action, "ok": e.success} for e in state.events[-5:]]
+            model  = state.model or "unknown"
 
-        # ── clear breach: all signals point to stuck ───────────────────────────
+        # pre-filter: if nothing is elevated, skip the Claude call entirely
+        signals_low = (retries < 1 and cost < cost_t * 0.2 and elapsed < time_t * 0.3)
+        if signals_low:
+            return
+
+        # rate-limit: at most one Claude call per agent per 10 seconds
+        now = time.time()
+        if now - self._last_eval.get(agent_id, 0) < 10:
+            return
+        self._last_eval[agent_id] = now
+
+        threading.Thread(
+            target=self._claude_evaluate,
+            args=(agent_id, retries, cost, progress, elapsed, retry_t, cost_t, time_t, recent, model),
+            daemon=True,
+        ).start()
+
+    def _rule_evaluate(self, agent_id, retries, cost, progress, elapsed,
+                       retry_t, cost_t, time_t):
+        """Fallback rule-based evaluation used when Claude is unavailable."""
         clear_reasons = []
         if retries >= retry_t and progress == 0:
             clear_reasons.append(f"{retries} retries, 0 steps completed")
@@ -500,40 +530,106 @@ class Watcher:
             clear_reasons.append(f"${cost:.4f} spent, nothing to show for it")
         if elapsed > time_t and progress == 0:
             clear_reasons.append(f"stuck for {time_t:.0f}s with no output")
-
         if clear_reasons:
             with self._lock:
                 state = self.states.get(agent_id)
-                if state and not state.alerted and not state.completed and not state.paused:
-                    state.alerted = True
-                    state.flagged = False  # escalate past flagged
-                else:
+                if not state or state.alerted or state.completed or state.paused:
                     return
+                state.alerted = True
+                state.flagged = False
             self._fire_alert(agent_id, "; ".join(clear_reasons), cost, retries, progress)
             return
-
-        # ── ambiguous zone: some progress but signals are elevated ─────────────
-        # Flag for human review instead of alerting outright.
-        ambiguous_reasons = []
         if retries >= max(1, retry_t // 2) and progress > 0:
-            ambiguous_reasons.append(f"{retries} retries, made some progress but may be stuck")
-        if cost >= cost_t * 0.6 and progress > 0 and elapsed > time_t * 0.5:
-            ambiguous_reasons.append(f"${cost:.4f} for {progress} step(s), cost looks high")
+            reason = f"{retries} retries, made some progress but may be stuck"
+        elif cost >= cost_t * 0.6 and progress > 0 and elapsed > time_t * 0.5:
+            reason = f"${cost:.4f} for {progress} step(s), cost looks high"
+        else:
+            return
+        with self._lock:
+            state = self.states.get(agent_id)
+            if not state or state.flagged or state.alerted or state.completed or state.paused:
+                return
+            state.flagged = True
+            state.notes.append(
+                f"[{datetime.datetime.now().strftime('%H:%M:%S')}] [watcher] flagged: {reason}"
+            )
+        self._dirty.set()
 
-        if ambiguous_reasons:
+    def _claude_evaluate(self, agent_id, retries, cost, progress, elapsed,
+                         retry_t, cost_t, time_t, recent, model):
+        import json as _json
+        try:
+            import anthropic
+        except ImportError:
+            self._rule_evaluate(agent_id, retries, cost, progress, elapsed, retry_t, cost_t, time_t)
+            return
+
+        summary = {
+            "retries":        retries,
+            "cost_usd":       round(cost, 4),
+            "progress_steps": progress,
+            "elapsed_s":      round(elapsed),
+            "recent_actions": recent,
+            "model":          model,
+        }
+        thresholds = {
+            "retry_limit": retry_t,
+            "cost_limit":  cost_t,
+            "time_limit":  time_t,
+        }
+        prompt = (
+            f"You are a lightweight monitor for an AI agent. "
+            f"Given its current state and thresholds, decide if it needs intervention.\n\n"
+            f"State: {_json.dumps(summary)}\n"
+            f"Thresholds: {_json.dumps(thresholds)}\n\n"
+            f"Reply with exactly one of:\n"
+            f"ALERT: <one-line reason>  (clearly stuck, burning cost with no output)\n"
+            f"FLAG: <one-line reason>   (ambiguous, needs human review)\n"
+            f"OK                        (within normal bounds)"
+        )
+
+        try:
+            client = anthropic.Anthropic()
+            response = client.messages.create(
+                model="claude-haiku-4-5",
+                max_tokens=60,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text = response.content[0].text.strip()
+        except Exception as e:
+            print(f"[watcher] claude eval error: {e} — falling back to rule-based")
+            self._rule_evaluate(agent_id, retries, cost, progress, elapsed, retry_t, cost_t, time_t)
+            return
+
+        with self._lock:
+            state = self.states.get(agent_id)
+            if not state or state.alerted or state.completed or state.paused:
+                return
+
+        if text.upper().startswith("ALERT"):
+            reason = text.split(":", 1)[1].strip() if ":" in text else text
             with self._lock:
                 state = self.states.get(agent_id)
-                if state and not state.flagged and not state.alerted and not state.completed and not state.paused:
-                    state.flagged = True
-                    flag_reason = "; ".join(ambiguous_reasons)
-                    state.notes.append(
-                        f"[{datetime.datetime.now().strftime('%H:%M:%S')}] "
-                        f"[watcher] flagged: {flag_reason}"
-                    )
-                else:
+                if not state or state.alerted or state.completed or state.paused:
                     return
+                state.alerted = True
+                state.flagged = False
+            self._fire_alert(agent_id, reason, cost, retries, progress)
+            print(f"\n[watcher] ALERT: {agent_id} — {reason}")
+
+        elif text.upper().startswith("FLAG"):
+            reason = text.split(":", 1)[1].strip() if ":" in text else text
+            with self._lock:
+                state = self.states.get(agent_id)
+                if not state or state.flagged or state.alerted or state.completed or state.paused:
+                    return
+                state.flagged = True
+                state.notes.append(
+                    f"[{datetime.datetime.now().strftime('%H:%M:%S')}] "
+                    f"[watcher] flagged: {reason}"
+                )
             self._dirty.set()
-            print(f"\n[watcher] {agent_id} flagged for review: {'; '.join(ambiguous_reasons)}")
+            print(f"\n[watcher] FLAG: {agent_id} — {reason}")
 
     def _fire_alert(self, agent_id, reason, cost, retries, progress):
         try:

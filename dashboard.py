@@ -969,8 +969,13 @@ def api_set_budget():
 @app.route("/api/escalate", methods=["POST"])
 def api_escalate():
     aid = request.json["agent_id"]
-    _push_undo(f"escalate {aid}", lambda: _watcher.reflag(aid))
     _watcher.escalate_flag(aid)
+    alert = next((a for a in reversed(_watcher.alerts) if a.agent_id == aid), None)
+    if alert:
+        alert_id = alert.id
+        _push_undo(f"escalate {aid}", lambda a=aid, i=alert_id: [_watcher.reflag(a), _watcher.delete_alert(i)])
+    else:
+        _push_undo(f"escalate {aid}", lambda a=aid: _watcher.reflag(a))
     return jsonify(ok=True)
 
 @app.route("/api/clear_flag", methods=["POST"])
