@@ -253,7 +253,6 @@ HTML = """
     <div class="stat"><label>done</label><div class="val good" id="h-done">0</div></div>
     <div class="stat"><label>running</label><div class="val" id="h-running">0</div></div>
     <div class="stat"><label>paused</label><div class="val" id="h-paused" style="color:var(--blue)">0</div></div>
-    <div class="stat"><label>est. saved</label><div class="val good" id="h-saved">$0.00</div></div>
   </div>
   <button class="undo-btn" id="undo-btn" onclick="undo()" disabled title="">↩ Undo</button>
   <button class="settings-toggle" onclick="document.getElementById('settings-panel').classList.toggle('open')">⚙ Settings</button>
@@ -323,7 +322,6 @@ HTML = """
     document.getElementById('h-done').textContent    = d.done_count;
     document.getElementById('h-running').textContent = d.running_count;
     document.getElementById('h-paused').textContent  = d.paused_count;
-    document.getElementById('h-saved').textContent   = '$' + d.cost_saved;
   }
 
   function renderGrid(agents) {
