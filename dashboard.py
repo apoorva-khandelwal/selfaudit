@@ -8,6 +8,9 @@ import json
 import time
 import threading
 from flask import Flask, Response, render_template_string, request, jsonify
+from models import get_cheaper_alternatives, format_tradeoffs
+
+_FLAG_REC = format_tradeoffs(get_cheaper_alternatives("claude-opus-4-8", 5.00))
 
 app = Flask(__name__)
 _watcher = None
@@ -429,6 +432,13 @@ HTML = """
           <span class="review-time">${f.time}</span>
         </div>
         <div class="review-reason">${f.reason}</div>
+        <div style="display:flex;gap:16px;margin:6px 0 4px;font-size:11px;color:var(--muted)">
+          <span>cost <strong style="color:#ccc">$${f.cost}</strong></span>
+          <span>steps <strong style="color:#ccc">${f.progress}</strong></span>
+          <span>retries <strong style="color:#ccc">${f.retries}</strong></span>
+          <span>proj/hr <strong style="color:#ccc">$${f.proj_1h}</strong></span>
+        </div>
+        ${f.rec ? `<div style="font-size:10px;color:#666;line-height:1.6;margin-bottom:8px;white-space:pre-wrap">${f.rec}</div>` : ''}
         <div class="review-actions">
           <button class="btn-escalate" onclick="escalate('${f.agent_id}')">⛔ Escalate to Alert</button>
           <button class="btn-clear"    onclick="clearFlag('${f.agent_id}')">✓ Looks fine — clear</button>
@@ -501,10 +511,16 @@ def _snapshot(watcher):
         if state.flagged and not state.alerted:
             watcher_notes = [n for n in state.notes if "[watcher]" in n]
             reason = watcher_notes[-1].split("[watcher] ")[-1] if watcher_notes else "ambiguous signals detected"
+            rec = _FLAG_REC
             flagged_list.append({
-                "agent_id": agent_id,
-                "reason":   reason,
-                "time":     dt.datetime.now().strftime("%H:%M:%S"),
+                "agent_id":   agent_id,
+                "reason":     reason,
+                "retries":    state.max_retry_count,
+                "cost":       f"{state.cumulative_cost:.4f}",
+                "progress":   state.progress_score,
+                "proj_1h":    f"{state.projected_cost_1h:.4f}",
+                "rec":        rec,
+                "time":       dt.datetime.now().strftime("%H:%M:%S"),
             })
 
         agents.append({
@@ -535,8 +551,6 @@ def _snapshot(watcher):
             "dismissed":      a.dismissed,
             "type":           "watcher",
         })
-    for pj in getattr(watcher, "peer_alerts", []):
-        all_alerts.append({**pj, "type": "peer", "dismissed": False, "id": None})
 
     return {
         "agents":        agents,
