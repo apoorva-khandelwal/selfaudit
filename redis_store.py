@@ -53,7 +53,7 @@ def push_snapshot(snapshot: dict) -> None:
         pass
 
 
-def get_snapshot() -> dict | None:
+def get_snapshot():
     """Read the latest snapshot from Redis. Returns None if unavailable."""
     r = _client()
     if not r:
