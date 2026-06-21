@@ -261,6 +261,14 @@ class Watcher:
                 self.states[agent_id].flagged = False
         self._dirty.set()
 
+    def reflag(self, agent_id: str):
+        """Restore flagged state (undo of clear_flag or escalate)."""
+        with self._lock:
+            if agent_id in self.states:
+                self.states[agent_id].flagged = True
+                self.states[agent_id].alerted = False
+        self._dirty.set()
+
     def escalate_flag(self, agent_id: str):
         """Human reviewed the flag and confirmed the agent is broken — fire a full alert."""
         with self._lock:

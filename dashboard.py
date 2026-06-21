@@ -640,7 +640,7 @@ HTML = """
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({agent_id: agentId})
-    });
+    }).then(() => refreshUndoBtn());
   }
 
   function clearFlag(agentId) {
@@ -648,7 +648,7 @@ HTML = """
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({agent_id: agentId})
-    });
+    }).then(() => refreshUndoBtn());
   }
 
   function applyBudget() {
@@ -955,12 +955,15 @@ def api_set_budget():
 @app.route("/api/escalate", methods=["POST"])
 def api_escalate():
     aid = request.json["agent_id"]
+    _push_undo(f"escalate {aid}", lambda: _watcher.reflag(aid))
     _watcher.escalate_flag(aid)
     return jsonify(ok=True)
 
 @app.route("/api/clear_flag", methods=["POST"])
 def api_clear_flag():
-    _watcher.unflag(agent_id=request.json["agent_id"])
+    aid = request.json["agent_id"]
+    _push_undo(f"clear flag on {aid}", lambda: _watcher.reflag(aid))
+    _watcher.unflag(agent_id=aid)
     return jsonify(ok=True)
 
 @app.route("/api/thresholds", methods=["POST"])
