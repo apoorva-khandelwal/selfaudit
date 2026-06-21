@@ -505,15 +505,24 @@ class Watcher:
         with self._lock:
             model = self.states[agent_id].model if agent_id in self.states else None
         situation = "zero_progress" if progress == 0 else "stuck_subtask"
+        rec = _build_recommendation(agent_id, model, cost, retries, progress, situation)
+
+        # pull similar past alerts from Redis memory (silent if unavailable)
+        try:
+            import memory as _mem
+            similar = _mem.get_similar(agent_id, reason, model or "")
+            rec["past_alerts"] = similar
+            _mem.store_alert(agent_id, reason, model or "", cost, retries, progress)
+        except Exception:
+            rec["past_alerts"] = []
+
         alert = Alert(
             agent_id=agent_id,
             reason=reason,
             cost_usd=cost,
             retry_count=retries,
             progress_score=progress,
-            recommendation=_build_recommendation(
-                agent_id, model, cost, retries, progress, situation
-            ),
+            recommendation=rec,
         )
         with self._lock:
             self.alerts.append(alert)

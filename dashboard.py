@@ -463,7 +463,7 @@ HTML = """
       html += '</ol>';
     }
     if (rec.alternatives && rec.alternatives.length) {
-      html += '<div style="font-size:10px;color:var(--muted);margin-bottom:4px;letter-spacing:.06em;text-transform:uppercase">cheaper alternatives</div>';
+      html += '<div style="font-size:10px;color:var(--muted);margin-bottom:4px;letter-spacing:.06em;text-transform:uppercase;margin-top:10px">cheaper alternatives</div>';
       html += '<div style="display:flex;flex-direction:column;gap:4px">';
       rec.alternatives.forEach(a => {
         html += `<div style="display:flex;align-items:baseline;gap:8px;font-size:11px">
@@ -472,6 +472,20 @@ HTML = """
           <span style="color:var(--muted)">· $${a.output_cost_per_1m.toFixed(2)}/$1M out</span>
           <span style="color:var(--muted)">· ${a.context_window_k}K ctx</span>
           <span style="color:#555">— ${a.notes}</span>
+        </div>`;
+      });
+      html += '</div>';
+    }
+    if (rec.past_alerts && rec.past_alerts.length) {
+      html += '<div style="font-size:10px;color:var(--muted);margin:10px 0 4px;letter-spacing:.06em;text-transform:uppercase">similar past alerts</div>';
+      html += '<div style="display:flex;flex-direction:column;gap:4px">';
+      rec.past_alerts.forEach(p => {
+        html += `<div style="font-size:11px;padding:5px 8px;background:rgba(255,255,255,.03);border-radius:4px;border-left:2px solid var(--border)">
+          <span style="color:#aaa;font-weight:600">${p.agent_id}</span>
+          <span style="color:var(--muted);margin:0 6px">·</span>
+          <span style="color:#888">${p.reason}</span>
+          <span style="color:var(--muted);margin:0 6px">·</span>
+          <span style="color:#555">$${p.cost} · ${p.time}</span>
         </div>`;
       });
       html += '</div>';
