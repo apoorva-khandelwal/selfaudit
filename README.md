@@ -6,7 +6,7 @@ A monitoring layer for AI agents that tracks cost against actual progress — no
 
 ## The problem
 
-Every existing cost-monitoring tool answers one question: *how much is this agent spending?* None of them answer the more important one — *is that spend buying anything?* An agent can stay well under budget every single time and still be a complete waste, because the failure mode isn't "too expensive," it's "spending with nothing to show for it." That's invisible to a tool that only watches dollars.
+Every existing cost-monitoring tool answers one question: *how much is this agent spending?* None of them answer the more important one *is that spend buying anything?* An agent can stay well under budget every single time and still be a complete waste, because the failure mode isn't "too expensive," it's "spending with nothing to show for it." That's invisible to a tool that only watches dollars.
 
 ## What it does
 
