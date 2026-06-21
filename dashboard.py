@@ -13,7 +13,6 @@ from models import MODELS, get_cheaper_alternatives, format_tradeoffs
 
 def _flag_rec(state):
     from sdk import _build_recommendation
-    # pick situation from the watcher note
     notes = [n for n in state.notes if "[watcher]" in n]
     last = notes[-1] if notes else ""
     if "cost/progress ratio" in last:
@@ -63,19 +62,12 @@ HTML = """
     .live.off { background:var(--muted); animation:none; }
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
 
-    /* settings panel */
-    .settings-toggle {
-      background: transparent; border: 1px solid var(--border); color: var(--muted);
-      font-family: inherit; font-size: 10px; padding: 3px 10px; border-radius: 4px;
-      cursor: pointer; letter-spacing:.06em;
+    /* thresholds bar */
+    .thresholds {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 10px 24px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
     }
-    .settings-toggle:hover { color: var(--text); border-color: var(--muted); }
-    .settings-panel {
-      display: none; background: var(--surface); border-bottom: 1px solid var(--border);
-      padding: 12px 24px; gap: 20px; flex-wrap: wrap; align-items: center;
-    }
-    .settings-panel.open { display: flex; }
-    .settings-panel span { font-size:10px; color:var(--muted); letter-spacing:.08em; text-transform:uppercase; }
+    .thresholds span { font-size:10px; color:var(--muted); letter-spacing:.08em; text-transform:uppercase; }
     .threshold-group { display:flex; align-items:center; gap:6px; }
     .threshold-group label { font-size:10px; color:var(--muted); }
     .threshold-group input {
@@ -169,11 +161,7 @@ HTML = """
 
     /* notes list */
     .notes-list { margin-top:8px; display:flex; flex-direction:column; gap:3px; }
-    .note-item { font-size:10px; color:var(--muted); padding:3px 0; border-bottom:1px solid #1a1a1a; display:flex; align-items:center; gap:6px; }
-    .note-text { flex:1; }
-    .note-edit-input { flex:1; background:var(--surface2); border:1px solid var(--border); color:var(--text); font-family:inherit; font-size:10px; padding:2px 6px; border-radius:3px; }
-    .note-btn { background:none; border:none; cursor:pointer; font-size:9px; color:var(--muted); padding:0 2px; }
-    .note-btn:hover { color:var(--text); }
+    .note-item { font-size:10px; color:var(--muted); padding:3px 0; border-bottom:1px solid #1a1a1a; }
 
     .callout { margin-top:8px; padding:7px 10px; border-radius:4px; font-size:11px; line-height:1.5; border-left:3px solid; }
     .callout.red    { border-color:var(--red);    background:rgba(255,59,48,.07);  color:#ff7a72; }
@@ -209,38 +197,91 @@ HTML = """
     .alert-log { border-top:1px solid var(--border); padding-top:24px; }
     .alert-entry {
       background:var(--surface); border:1px solid #2b0d0d; border-left:3px solid var(--red);
-      border-radius:6px; padding:12px 14px; margin-bottom:8px;
+      border-radius:6px; padding:12px 14px; margin-bottom:8px; position:relative;
     }
+    .alert-entry.peer   { border-color:#2b1d0d; border-left-color:var(--orange); }
     .alert-entry.dismissed { opacity:.35; }
-    .alert-meta { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+    .alert-meta { display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; }
     .alert-agent { font-weight:700; color:var(--red); font-size:12px; }
+    .alert-entry.peer .alert-agent { color:var(--orange); }
     .alert-time  { font-size:10px; color:var(--muted); }
-    .alert-reason { color:#ccc; margin-bottom:8px; font-size:12px; }
-    .alert-actions { display:flex; gap:6px; align-items:center; margin-top:8px; }
-    .btn-rec {
-      background:transparent; border:1px solid #3a2a0a; color:var(--orange);
-      font-family:inherit; font-size:10px; font-weight:600; padding:4px 10px;
-      border-radius:4px; cursor:pointer; letter-spacing:.04em;
-    }
-    .btn-rec:hover { background:#2b1d0d; }
-    .btn-rec.open  { background:#2b1d0d; }
-    .btn-dismiss-sm {
+    .alert-reason { color:#ccc; margin-bottom:4px; font-size:12px; }
+    .alert-rec    { color:var(--muted); font-size:11px; line-height:1.6; }
+    .btn-dismiss {
+      position:absolute; top:10px; right:12px;
       background:transparent; border:1px solid var(--border); color:var(--muted);
-      font-family:inherit; font-size:10px; padding:4px 10px; border-radius:4px; cursor:pointer;
+      font-family:inherit; font-size:9px; padding:2px 7px; border-radius:3px; cursor:pointer;
     }
-    .btn-dismiss-sm:hover { color:var(--text); border-color:var(--muted); }
-    .btn-delete-sm {
-      background:transparent; border:1px solid #3a1a1a; color:var(--red);
-      font-family:inherit; font-size:10px; padding:4px 10px; border-radius:4px; cursor:pointer;
-    }
-    .btn-delete-sm:hover { background:#2b0d0d; }
-    .rec-panel { display:none; margin-top:10px; padding:10px 12px; background:var(--surface2); border-radius:6px; border:1px solid var(--border); }
-    .rec-panel.open { display:block; }
-    .alert-rec { color:var(--muted); font-size:11px; line-height:1.6; }
+    .btn-dismiss:hover { color:var(--text); border-color:var(--muted); }
     .empty-log { color:var(--muted); font-size:12px; padding:12px 0; }
+
+    /* toast notifications */
+    .toast-container {
+      position: fixed; top: 16px; right: 16px;
+      z-index: 200; display: flex; flex-direction: column; gap: 10px;
+      pointer-events: none;
+    }
+    .toast {
+      background: #1c1c1e; border: 1px solid var(--red);
+      border-radius: 12px; padding: 12px 14px;
+      width: 300px; box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+      pointer-events: all;
+      animation: slideIn .3s ease;
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .toast.hiding { animation: slideOut .3s ease forwards; }
+    @keyframes slideIn {
+      from { opacity:0; transform: translateX(320px); }
+      to   { opacity:1; transform: translateX(0); }
+    }
+    @keyframes slideOut {
+      from { opacity:1; transform: translateX(0); }
+      to   { opacity:0; transform: translateX(320px); }
+    }
+    .toast-top { display:flex; align-items:center; gap:8px; }
+    .toast-icon { font-size:14px; }
+    .toast-title { font-size:11px; font-weight:700; color:var(--red); flex:1; }
+    .toast-close { background:none; border:none; color:var(--muted); cursor:pointer; font-size:13px; padding:0; line-height:1; }
+    .toast-close:hover { color:var(--text); }
+    .toast-agent { font-size:10px; color:var(--muted); }
+    .toast-reason { font-size:11px; color:#ccc; line-height:1.5; }
+    .toast-btns { display:flex; gap:6px; margin-top:4px; }
+    .toast-btn-pause {
+      flex:1; background:var(--blue); color:#fff; border:none;
+      border-radius:6px; padding:6px; font-family:inherit;
+      font-size:10px; font-weight:600; cursor:pointer;
+    }
+    .toast-btn-dismiss {
+      flex:1; background:transparent; color:var(--muted);
+      border:1px solid var(--border); border-radius:6px; padding:6px;
+      font-family:inherit; font-size:10px; cursor:pointer;
+    }
+    .toast-btn-dismiss:hover { color:var(--text); }
+
+    /* fixable alert recommendation on card */
+    .alert-rec-card {
+      margin-top:8px; padding:10px 12px; border-radius:6px;
+      background:rgba(255,59,48,0.05); border:1px solid #3a1a1a;
+      font-size:11px; line-height:1.6; color:#ccc;
+    }
+    .alert-rec-card strong { color:var(--red); display:block; margin-bottom:4px; font-size:10px; letter-spacing:.08em; text-transform:uppercase; }
+    .alert-card-btns { display:flex; gap:6px; margin-top:10px; }
+    .btn-investigate {
+      background:var(--blue); color:#fff; border:none;
+      border-radius:4px; padding:5px 12px; font-family:inherit;
+      font-size:10px; font-weight:600; cursor:pointer;
+    }
+    .btn-accept {
+      background:transparent; color:var(--muted);
+      border:1px solid var(--border); border-radius:4px;
+      padding:5px 12px; font-family:inherit; font-size:10px; cursor:pointer;
+    }
+    .btn-accept:hover { color:var(--text); border-color:var(--muted); }
   </style>
 </head>
 <body>
+
+<div class="toast-container" id="toast-container"></div>
 
 <div class="header">
   <div class="logo">Self<span>Audit</span></div>
@@ -251,13 +292,13 @@ HTML = """
     <div class="stat"><label>running</label><div class="val" id="h-running">0</div></div>
     <div class="stat"><label>paused</label><div class="val" id="h-paused" style="color:var(--blue)">0</div></div>
     <div class="stat"><label>est. saved</label><div class="val good" id="h-saved">$0.00</div></div>
+    <div class="stat"><label>redis memory</label><div class="val good" id="h-memory">0 cases</div></div>
   </div>
-  <button class="settings-toggle" onclick="document.getElementById('settings-panel').classList.toggle('open')">⚙ Settings</button>
   <div class="live" id="live-dot"></div>
 </div>
 
-<div class="settings-panel" id="settings-panel">
-  <span>global defaults</span>
+<div class="thresholds">
+  <span>thresholds</span>
   <div class="threshold-group">
     <label>retries</label>
     <input type="number" id="t-retry" value="3" min="1">
@@ -271,8 +312,8 @@ HTML = """
     <input type="number" id="t-time" value="30" min="5">
   </div>
   <button class="btn-apply" onclick="applyThresholds()">Apply</button>
-  <div style="width:1px;background:var(--border);margin:0 4px;height:20px"></div>
-  <span>per-agent budget</span>
+  <div style="width:1px;background:var(--border);margin:0 8px;height:20px"></div>
+  <span style="font-size:10px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase">per-agent budget</span>
   <div class="threshold-group">
     <input type="text" id="b-agent" placeholder="agent-id" style="width:120px">
   </div>
@@ -281,7 +322,6 @@ HTML = """
     <input type="number" id="b-cap" value="0.10" min="0.01" step="0.01">
   </div>
   <button class="btn-apply" style="background:var(--orange)" onclick="applyBudget()">Set</button>
-  <span id="budget-msg" style="font-size:10px;transition:opacity .5s"></span>
 </div>
 
 <div class="main">
@@ -302,6 +342,7 @@ HTML = """
 
 <script>
   const source = new EventSource('/stream');
+  const _shownModals = new Set();
 
   source.onmessage = (e) => {
     const data = JSON.parse(e.data);
@@ -310,8 +351,60 @@ HTML = """
     renderReviewQueue(data.flagged);
     renderAlertLog(data.alerts);
     document.getElementById('live-dot').className = 'live';
+    // trigger modal for new non-fixable alerts
+    data.agents.forEach(a => {
+      if (a.alerted && !a.fixable && !a.paused && !_shownModals.has(a.agent_id)) {
+        _shownModals.add(a.agent_id);
+        showToast(a.agent_id, a.alert_reason);
+      }
+    });
   };
   source.onerror = () => { document.getElementById('live-dot').className = 'live off'; };
+
+  // request browser notification permission on load
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+
+  function showToast(agentId, reason) {
+    // OS-level notification only when user is on a different tab
+    if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+      const n = new Notification('⛔ Non-Recoverable Alert — ' + agentId, {
+        body: reason || 'This agent encountered a non-recoverable error.',
+        icon: 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⛔</text></svg>',
+        tag: agentId,
+      });
+      n.onclick = () => { window.focus(); n.close(); };
+    }
+    // in-page toast (visible when on dashboard tab)
+    const id = 'toast-' + agentId.replace(/[^a-z0-9]/gi,'_');
+    if (document.getElementById(id)) return;
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.id = id;
+    toast.innerHTML = `
+      <div class="toast-top">
+        <span class="toast-icon">⛔</span>
+        <span class="toast-title">Non-Recoverable Alert</span>
+        <button class="toast-close" onclick="dismissToast('${id}')">✕</button>
+      </div>
+      <div class="toast-agent">${agentId}</div>
+      <div class="toast-reason">${reason || 'This agent encountered a non-recoverable error.'}</div>
+      <div class="toast-btns">
+        <button class="toast-btn-pause" onclick="api('pause','${agentId}'); dismissToast('${id}')">⏸ Pause Agent</button>
+        <button class="toast-btn-dismiss" onclick="dismissToast('${id}')">Ignore</button>
+      </div>
+    `;
+    container.appendChild(toast);
+    setTimeout(() => dismissToast(id), 8000);
+  }
+  function dismissToast(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.add('hiding');
+    setTimeout(() => el.remove(), 300);
+  }
 
   function updateHeader(d) {
     document.getElementById('h-cost').textContent    = '$' + d.total_cost;
@@ -320,6 +413,7 @@ HTML = """
     document.getElementById('h-running').textContent = d.running_count;
     document.getElementById('h-paused').textContent  = d.paused_count;
     document.getElementById('h-saved').textContent   = '$' + d.cost_saved;
+    document.getElementById('h-memory').textContent  = d.memory_count + ' cases';
   }
 
   function renderGrid(agents) {
@@ -357,62 +451,62 @@ HTML = """
     const progCls  = a.progress > 0 ? ' good' : '';
     const retryCls = a.retries >= 3 ? ' danger' : a.retries >= 2 ? ' warn' : '';
 
-    // deduplicate repeated actions — show "call_api ×5" instead of 5 rows
-    const actionMap = [];
-    (a.recent_actions||[]).forEach(r => {
-      const last = actionMap[actionMap.length - 1];
-      if (last && last.action === r.action && last.success === r.success) {
-        last.count++; last.cost = (parseFloat(last.cost) + parseFloat(r.cost)).toFixed(4);
-      } else {
-        actionMap.push({...r, count: 1, cost: r.cost});
-      }
-    });
-    const actionsHTML = actionMap.map(r =>
+    const actionsHTML = (a.recent_actions||[]).map(r =>
       `<div class="action-row ${r.success?'success':'fail'}">
-        <span>${r.success?'✓':'✗'}</span>
-        <span>${r.action}${r.count>1?` <span style="color:var(--muted)">×${r.count}</span>`:''}</span>
+        <span>${r.success?'✓':'✗'}</span><span>${r.action}</span>
         <span style="margin-left:auto;font-size:10px">$${r.cost}</span>
       </div>`).join('') || '<div class="action-row">no actions yet</div>';
 
-    // only show user-added notes in the card (watcher notes are in the review queue)
-    const userNotes = (a.notes||[]).filter(n => !n.text.includes('[watcher]'));
-    const notesHTML = userNotes.map(n =>
-      `<div class="note-item" id="note-item-${a.agent_id.replace(/[^a-z0-9]/gi,'_')}-${n.i}">
-        <span class="note-text" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${n.text}</span>
-        <button class="note-btn" title="Edit" onclick="startEditNote('${a.agent_id}',${n.i},this)">✎</button>
-        <button class="note-btn" title="Delete" onclick="deleteNote('${a.agent_id}',${n.i})">✕</button>
-      </div>`).join('');
+    const notesHTML = (a.notes||[]).map(n =>
+      `<div class="note-item">${n}</div>`).join('');
 
-    const modelTag     = a.model ? `<div style="font-size:9px;color:var(--muted);margin-top:2px">${a.model}</div>` : '';
-    const alertCallout = a.alert_reason ? `<div class="callout red">${a.alert_reason}</div>` : '';
-    const flagCallout  = a.flagged && !a.alert_reason ? `<div class="callout orange">⚠ flagged for human review</div>` : '';
-    const pauseCallout = a.paused ? `<div class="callout blue">⏸ paused</div>` : '';
-    const projLine     = (!a.paused && !a.completed && parseFloat(a.proj_1h) > 0.01)
-      ? `<div style="font-size:10px;color:#555;margin-top:6px">at current rate: <span style="color:#888">$${a.proj_1h}/hr</span>${a.budget?` · cap <span style="color:#aaa">$${a.budget}</span>`:''}</div>` : '';
+    const modelTag      = a.model ? `<span style="font-size:9px;color:var(--muted);margin-left:4px">[${a.model}]</span>` : '';
+    const alertCallout  = a.alert_reason  ? `<div class="callout red">${a.alert_reason}</div>` : '';
+    const fixableRec    = (a.alerted && a.fixable && a.alert_recommendation) ? (() => {
+      const rec = a.alert_recommendation;
+      const headline = typeof rec === 'object' ? (rec.headline || '') : rec;
+      const steps = typeof rec === 'object' && rec.steps ? rec.steps.map((s,i) => `<div style="margin:2px 0">${i+1}. ${s}</div>`).join('') : '';
+      return `<div class="alert-rec-card">
+        <strong>💡 suggestions</strong>
+        <div style="margin-bottom:6px">${headline}</div>${steps}
+        <div class="alert-card-btns">
+          <button class="btn-investigate" onclick="api('pause','${a.agent_id}')">⏸ Pause &amp; Investigate</button>
+          <button class="btn-accept" onclick="this.closest('.alert-rec-card').remove()">Accept Risk</button>
+        </div>
+      </div>`;
+    })() : '';
+    const flagCallout   = a.flagged && !a.alert_reason ? `<div class="callout orange">⚠ flagged for human review</div>` : '';
+    const pauseCallout  = a.paused ? `<div class="callout blue">⏸ paused — not accumulating cost</div>` : '';
+    const projCallout   = (!a.paused && !a.completed && a.proj_1h > 0.01)
+      ? `<div class="callout" style="border-color:#555;background:rgba(255,255,255,.03);color:#888;margin-top:8px">
+           📈 at current rate: <strong style="color:#ccc">$${a.proj_1h}/hr</strong>${a.budget ? ` · budget $${a.budget}` : ''}
+         </div>` : '';
 
-    const pauseBtn = a.paused
+    const pauseBtn  = a.paused
       ? `<button class="btn btn-resume" onclick="api('resume','${a.agent_id}')">▶ Resume</button>`
       : `<button class="btn btn-pause"  onclick="api('pause','${a.agent_id}')">⏸ Pause</button>`;
+    const flagBtn = '';
 
     card.innerHTML = `
       <div class="card-top">
-        <div><span class="agent-name"><span class="pulse ${pulse}"></span>${a.agent_id}</span>${modelTag}</div>
+        <span class="agent-name"><span class="pulse ${pulse}"></span>${a.agent_id}${modelTag}</span>
         <span class="badge ${badge}">${label}</span>
       </div>
       <div class="metrics">
         <div class="metric"><label>cost</label><div class="val${costCls}">$${a.cost}</div></div>
-        <div class="metric"><label>steps</label><div class="val${progCls}">${a.progress}</div></div>
+        <div class="metric"><label>steps <span style="font-size:8px;color:var(--muted)">${a.progress_mode==='total'?'total':'uniq'}</span></label><div class="val${progCls}">${a.progress}</div></div>
         <div class="metric"><label>retries</label><div class="val${retryCls}">${a.retries}</div></div>
         <div class="metric"><label>elapsed</label><div class="val">${a.elapsed}s</div></div>
       </div>
       <div class="bar-wrap"><div class="bar ${barCls}" style="width:${costPct}%"></div></div>
       <div class="actions">${actionsHTML}</div>
-      ${alertCallout}${flagCallout}${pauseCallout}${projLine}
-      ${notesHTML ? `<div class="notes-list" style="margin-top:8px">${notesHTML}</div>` : ''}
+      ${alertCallout}${fixableRec}${flagCallout}${pauseCallout}${projCallout}
+      ${notesHTML ? `<div class="notes-list">${notesHTML}</div>` : ''}
       <div class="controls">
         ${pauseBtn}
+        ${flagBtn}
         <button class="btn btn-note" onclick="toggleNote('${a.agent_id}', this)">✎ Note</button>
-        <button class="btn btn-note" onclick="toggleThresh('${a.agent_id}')">⚙</button>
+        <button class="btn btn-note" onclick="toggleThresh('${a.agent_id}')">⚙ Thresholds</button>
       </div>
       <div class="note-row" id="note-${a.agent_id.replace(/[^a-z0-9]/gi,'_')}">
         <input class="note-input" type="text" placeholder="add a note..." onkeydown="if(event.key==='Enter')sendNote('${a.agent_id}',this)">
@@ -438,68 +532,15 @@ HTML = """
     const log = document.getElementById('alert-log');
     if (!alerts||!alerts.length) { log.innerHTML='<div class="empty-log">no alerts yet</div>'; return; }
     log.innerHTML = [...alerts].reverse().map(a => `
-      <div class="alert-entry ${a.dismissed?'dismissed':''}">
+      <div class="alert-entry ${a.dismissed?'dismissed':''} ${a.type==='peer'?'peer':''}">
         <div class="alert-meta">
-          <span class="alert-agent">⛔ ${a.agent_id}</span>
+          <span class="alert-agent">${a.type==='peer'?'⚠ PEER — ':'⛔ ALERT — '}${a.agent_id}</span>
           <span class="alert-time">${a.time}</span>
         </div>
         <div class="alert-reason">${a.reason}</div>
-        <div class="alert-actions">
-          ${a.recommendation ? `<button class="btn-rec" id="rec-btn-${a.id}" onclick="toggleRec('${a.id}')">💡 Recommendation</button>` : ''}
-          ${a.id && !a.dismissed ? `<button class="btn-dismiss-sm" onclick="dismissAlert('${a.id}')">Dismiss</button>` : ''}
-          ${a.id ? `<button class="btn-delete-sm" onclick="deleteAlert('${a.id}')">Delete</button>` : ''}
-        </div>
-        ${a.recommendation ? `<div class="rec-panel" id="rec-${a.id}"><div class="alert-rec">${renderRec(a.recommendation)}</div></div>` : ''}
+        <div class="alert-rec">${a.recommendation.replace(/\\n/g,'<br>')}</div>
+        ${!a.dismissed && a.id ? `<button class="btn-dismiss" onclick="dismissAlert('${a.id}')">Dismiss</button>` : ''}
       </div>`).join('');
-  }
-
-  function toggleRec(alertId) {
-    const panel = document.getElementById('rec-' + alertId);
-    const btn   = document.getElementById('rec-btn-' + alertId);
-    if (!panel) return;
-    const open = panel.classList.toggle('open');
-    btn.classList.toggle('open', open);
-    btn.textContent = open ? '💡 Hide' : '💡 Recommendation';
-  }
-
-  function renderRec(rec) {
-    if (!rec || typeof rec === 'string') return rec || '';
-    let html = '';
-    if (rec.headline) html += `<div style="color:#ccc;font-weight:600;margin-bottom:6px">${rec.headline}</div>`;
-    if (rec.steps && rec.steps.length) {
-      html += '<ol style="margin:0 0 10px 16px;padding:0;display:flex;flex-direction:column;gap:4px">';
-      rec.steps.forEach(s => { html += `<li style="color:#aaa">${s}</li>`; });
-      html += '</ol>';
-    }
-    if (rec.alternatives && rec.alternatives.length) {
-      html += '<div style="font-size:10px;color:var(--muted);margin-bottom:4px;letter-spacing:.06em;text-transform:uppercase;margin-top:10px">cheaper alternatives</div>';
-      html += '<div style="display:flex;flex-direction:column;gap:4px">';
-      rec.alternatives.forEach(a => {
-        html += `<div style="display:flex;align-items:baseline;gap:8px;font-size:11px">
-          <span style="color:#ccc;font-weight:600;min-width:160px">${a.id}</span>
-          <span style="color:var(--green)">$${a.input_cost_per_1m.toFixed(2)}/$1M in</span>
-          <span style="color:var(--muted)">· $${a.output_cost_per_1m.toFixed(2)}/$1M out</span>
-          <span style="color:var(--muted)">· ${a.context_window_k}K ctx</span>
-          <span style="color:#555">— ${a.notes}</span>
-        </div>`;
-      });
-      html += '</div>';
-    }
-    if (rec.past_alerts && rec.past_alerts.length) {
-      html += '<div style="font-size:10px;color:var(--muted);margin:10px 0 4px;letter-spacing:.06em;text-transform:uppercase">similar past alerts</div>';
-      html += '<div style="display:flex;flex-direction:column;gap:4px">';
-      rec.past_alerts.forEach(p => {
-        html += `<div style="font-size:11px;padding:5px 8px;background:rgba(255,255,255,.03);border-radius:4px;border-left:2px solid var(--border)">
-          <span style="color:#aaa;font-weight:600">${p.agent_id}</span>
-          <span style="color:var(--muted);margin:0 6px">·</span>
-          <span style="color:#888">${p.reason}</span>
-          <span style="color:var(--muted);margin:0 6px">·</span>
-          <span style="color:#555">$${p.cost} · ${p.time}</span>
-        </div>`;
-      });
-      html += '</div>';
-    }
-    return html;
   }
 
   function api(action, agentId) {
@@ -538,58 +579,6 @@ HTML = """
     });
   }
 
-  function deleteAlert(alertId) {
-    fetch('/api/delete_alert', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({alert_id: alertId})
-    });
-  }
-
-  function startEditNote(agentId, index, btn) {
-    const key = agentId.replace(/[^a-z0-9]/gi,'_');
-    const item = document.getElementById(`note-item-${key}-${index}`);
-    const span = item.querySelector('.note-text');
-    const current = span.textContent;
-    item.innerHTML = `
-      <input class="note-edit-input" value="${current.replace(/"/g,'&quot;')}" id="edit-input-${key}-${index}">
-      <button class="note-btn" onclick="saveEditNote('${agentId}',${index})">✓</button>
-      <button class="note-btn" onclick="cancelEditNote('${agentId}',${index},'${current.replace(/'/g,"\\'")}')">✕</button>
-    `;
-    const input = document.getElementById(`edit-input-${key}-${index}`);
-    input.focus();
-    input.addEventListener('keydown', e => { if(e.key==='Enter') saveEditNote(agentId,index); if(e.key==='Escape') cancelEditNote(agentId,index,current); });
-  }
-
-  function saveEditNote(agentId, index) {
-    const key = agentId.replace(/[^a-z0-9]/gi,'_');
-    const input = document.getElementById(`edit-input-${key}-${index}`);
-    if (!input) return;
-    fetch('/api/edit_note', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({agent_id: agentId, index, text: input.value})
-    });
-  }
-
-  function cancelEditNote(agentId, index, original) {
-    const key = agentId.replace(/[^a-z0-9]/gi,'_');
-    const item = document.getElementById(`note-item-${key}-${index}`);
-    item.innerHTML = `
-      <span class="note-text">${original}</span>
-      <button class="note-btn" title="Edit" onclick="startEditNote('${agentId}',${index},this)">✎</button>
-      <button class="note-btn" title="Delete" onclick="deleteNote('${agentId}',${index})">✕</button>
-    `;
-  }
-
-  function deleteNote(agentId, index) {
-    fetch('/api/delete_note', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({agent_id: agentId, index})
-    });
-  }
-
   function renderReviewQueue(flags) {
     const el = document.getElementById('review-queue');
     if (!flags || !flags.length) {
@@ -603,12 +592,13 @@ HTML = """
           <span class="review-time">${f.time}</span>
         </div>
         <div class="review-reason">${f.reason}</div>
-        <div style="display:flex;gap:16px;margin:6px 0 8px;font-size:11px;color:var(--muted)">
+        <div style="display:flex;gap:16px;margin:6px 0 4px;font-size:11px;color:var(--muted)">
           <span>cost <strong style="color:#ccc">$${f.cost}</strong></span>
           <span>steps <strong style="color:#ccc">${f.progress}</strong></span>
           <span>retries <strong style="color:#ccc">${f.retries}</strong></span>
           <span>proj/hr <strong style="color:#ccc">$${f.proj_1h}</strong></span>
         </div>
+        ${f.rec ? `<div style="font-size:10px;color:#666;line-height:1.6;margin-bottom:8px;white-space:pre-wrap">${f.rec}</div>` : ''}
         <div class="review-actions">
           <button class="btn-escalate" onclick="escalate('${f.agent_id}')">⛔ Escalate to Alert</button>
           <button class="btn-clear"    onclick="clearFlag('${f.agent_id}')">✓ Looks fine — clear</button>
@@ -651,7 +641,13 @@ HTML = """
   }
 
   function showBudgetMsg(msg, color) {
-    const el = document.getElementById('budget-msg');
+    let el = document.getElementById('budget-msg');
+    if (!el) {
+      el = document.createElement('span');
+      el.id = 'budget-msg';
+      el.style.cssText = 'font-size:10px;transition:opacity .5s';
+      document.querySelector('.thresholds').appendChild(el);
+    }
     el.style.color = color;
     el.style.opacity = '1';
     el.textContent = msg;
@@ -697,6 +693,15 @@ HTML = """
 """
 
 
+def _redis_memory_count():
+    try:
+        from peer_judge import _redis_client, _INDEX_KEY
+        r = _redis_client()
+        return int(r.scard(_INDEX_KEY)) if r else 0
+    except Exception:
+        return 0
+
+
 def _snapshot(watcher):
     import datetime as dt
     agents = []
@@ -718,7 +723,7 @@ def _snapshot(watcher):
         if state.flagged and not state.alerted:
             watcher_notes = [n for n in state.notes if "[watcher]" in n]
             reason = watcher_notes[-1].split("[watcher] ")[-1] if watcher_notes else "ambiguous signals detected"
-            rec = ""  # recommendation shown only after escalation to alert
+            rec = _flag_rec(state)
             flagged_list.append({
                 "agent_id":   agent_id,
                 "reason":     reason,
@@ -731,25 +736,27 @@ def _snapshot(watcher):
             })
 
         agents.append({
-            "agent_id":       agent_id,
-            "status":         status,
-            "cost":           f"{state.cumulative_cost:.4f}",
-            "progress":       state.progress_score,
-            "retries":        state.max_retry_count,
-            "elapsed":        f"{state.elapsed:.1f}",
-            "recent_actions": [{"action": e.action, "success": e.success, "cost": f"{e.cost_usd:.4f}"} for e in state.events[-4:]],
-            "alerted":        state.alerted,
-            "paused":         state.paused,
-            "flagged":        state.flagged,
-            "notes":          [{"i": i, "text": n} for i, n in enumerate(state.notes)],
-            "alert_reason":   matched.reason if matched else None,
-            "proj_1h":        f"{state.projected_cost_1h:.4f}",
-            "budget":         f"{state.budget_usd:.2f}" if state.budget_usd else None,
-            "model":          state.model,
-            "progress_mode":  state.progress_mode,
-            "t_retry":        state.retry_threshold,
-            "t_cost":         state.cost_threshold,
-            "t_time":         state.time_threshold,
+            "agent_id":             agent_id,
+            "status":               status,
+            "cost":                 f"{state.cumulative_cost:.4f}",
+            "progress":             state.progress_score,
+            "retries":              state.max_retry_count,
+            "elapsed":              f"{state.elapsed:.1f}",
+            "recent_actions":       [{"action": e.action, "success": e.success, "cost": f"{e.cost_usd:.4f}"} for e in state.events[-4:]],
+            "alerted":              state.alerted,
+            "paused":               state.paused,
+            "flagged":              state.flagged,
+            "notes":                [{"i": i, "text": n} for i, n in enumerate(state.notes)],
+            "alert_reason":         matched.reason if matched else None,
+            "alert_recommendation": matched.recommendation if matched else None,
+            "fixable":              state.progress_score > 0,
+            "proj_1h":              f"{state.projected_cost_1h:.4f}",
+            "budget":               f"{state.budget_usd:.2f}" if state.budget_usd else None,
+            "model":                state.model,
+            "progress_mode":        state.progress_mode,
+            "t_retry":              state.retry_threshold,
+            "t_cost":               state.cost_threshold,
+            "t_time":               state.time_threshold,
         })
 
     import datetime
@@ -774,6 +781,7 @@ def _snapshot(watcher):
         "running_count": running_count,
         "paused_count":  paused_count,
         "cost_saved":    f"{getattr(watcher, 'cost_saved_usd', 0.0):.2f}",
+        "memory_count":  _redis_memory_count(),
     }
 
 
@@ -785,45 +793,13 @@ def index():
 @app.route("/stream")
 def stream():
     def generate():
-        # send initial snapshot from local watcher or Redis
-        if _watcher and _watcher.states:
-            yield f"data: {json.dumps(_snapshot(_watcher))}\n\n"
-        else:
-            try:
-                import redis_store as _rs
-                snap = _rs.get_snapshot()
-                if snap:
-                    yield f"data: {json.dumps(snap)}\n\n"
-            except Exception:
-                pass
-
-        if _watcher:
-            # local mode: use threading.Event
-            while True:
-                changed = _watcher._dirty.wait(timeout=2.0)
-                if changed and _watcher.states:
-                    _watcher._dirty.clear()
-                    yield f"data: {json.dumps(_snapshot(_watcher))}\n\n"
-        else:
-            # viewer mode (friend's machine): subscribe to Redis pub/sub
-            try:
-                import redis_store as _rs
-                for _ in _rs.subscribe():
-                    snap = _rs.get_snapshot()
-                    if snap:
-                        yield f"data: {json.dumps(snap)}\n\n"
-            except Exception:
-                # fall back to polling every 2s if pub/sub fails
-                while True:
-                    time.sleep(2)
-                    try:
-                        import redis_store as _rs
-                        snap = _rs.get_snapshot()
-                        if snap:
-                            yield f"data: {json.dumps(snap)}\n\n"
-                    except Exception:
-                        pass
-
+        while True:
+            if _watcher:
+                _watcher._dirty.wait(timeout=2.0)
+                _watcher._dirty.clear()
+                yield f"data: {json.dumps(_snapshot(_watcher))}\n\n"
+            else:
+                time.sleep(1)
     return Response(generate(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
@@ -836,7 +812,6 @@ def api_pause():
 def api_resume():
     _watcher.resume(request.json["agent_id"]); return jsonify(ok=True)
 
-
 @app.route("/api/note",       methods=["POST"])
 def api_note():
     _watcher.add_note(request.json["agent_id"], request.json["note"]); return jsonify(ok=True)
@@ -844,22 +819,6 @@ def api_note():
 @app.route("/api/dismiss",    methods=["POST"])
 def api_dismiss():
     _watcher.dismiss_alert(request.json["alert_id"]); return jsonify(ok=True)
-
-@app.route("/api/delete_alert", methods=["POST"])
-def api_delete_alert():
-    _watcher.delete_alert(request.json["alert_id"]); return jsonify(ok=True)
-
-@app.route("/api/edit_note", methods=["POST"])
-def api_edit_note():
-    d = request.json
-    ok = _watcher.edit_note(d["agent_id"], d["index"], d["text"])
-    return jsonify(ok=ok)
-
-@app.route("/api/delete_note", methods=["POST"])
-def api_delete_note():
-    d = request.json
-    ok = _watcher.delete_note(d["agent_id"], d["index"])
-    return jsonify(ok=ok)
 
 @app.route("/api/set_budget", methods=["POST"])
 def api_set_budget():
@@ -871,14 +830,11 @@ def api_set_budget():
 
 @app.route("/api/escalate", methods=["POST"])
 def api_escalate():
-    """Human reviewed a flag and decided it's actually broken — fire a full alert."""
-    agent_id = request.json["agent_id"]
-    _watcher.escalate_flag(agent_id)
+    _watcher.escalate_flag(request.json["agent_id"])
     return jsonify(ok=True)
 
 @app.route("/api/clear_flag", methods=["POST"])
 def api_clear_flag():
-    """Human reviewed a flag and decided the agent is fine — clear it."""
     _watcher.unflag(agent_id=request.json["agent_id"])
     return jsonify(ok=True)
 
@@ -910,18 +866,3 @@ def start(watcher, port=5050):
         daemon=True,
     ).start()
     print(f"  Dashboard → http://localhost:{port}\n")
-
-
-def start_viewer(port=5050):
-    """Start dashboard in viewer-only mode — reads live data from Redis (no local watcher needed)."""
-    global _watcher
-    _watcher = None
-    app.run(port=port, debug=False, use_reloader=False)
-
-
-if __name__ == "__main__":
-    import sys
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 5050
-    print(f"SelfAudit viewer — connecting to Redis for live data...")
-    print(f"Dashboard → http://localhost:{port}")
-    start_viewer(port=port)
