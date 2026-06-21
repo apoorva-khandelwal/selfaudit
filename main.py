@@ -100,13 +100,6 @@ def main():
                         help="skip Phoenix trace UI")
     args = parser.parse_args()
 
-    if not args.no_phoenix:
-        try:
-            import tracing
-            tracing.setup()
-        except Exception as e:
-            print(f"  Phoenix skipped ({e})\n")
-
     watcher = Watcher(
         task_description="Process a dataset and produce a structured summary report.",
     )
