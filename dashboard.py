@@ -63,12 +63,19 @@ HTML = """
     .live.off { background:var(--muted); animation:none; }
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
 
-    /* thresholds bar */
-    .thresholds {
-      background: var(--surface); border-bottom: 1px solid var(--border);
-      padding: 10px 24px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+    /* settings panel */
+    .settings-toggle {
+      background: transparent; border: 1px solid var(--border); color: var(--muted);
+      font-family: inherit; font-size: 10px; padding: 3px 10px; border-radius: 4px;
+      cursor: pointer; letter-spacing:.06em;
     }
-    .thresholds span { font-size:10px; color:var(--muted); letter-spacing:.08em; text-transform:uppercase; }
+    .settings-toggle:hover { color: var(--text); border-color: var(--muted); }
+    .settings-panel {
+      display: none; background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 12px 24px; gap: 20px; flex-wrap: wrap; align-items: center;
+    }
+    .settings-panel.open { display: flex; }
+    .settings-panel span { font-size:10px; color:var(--muted); letter-spacing:.08em; text-transform:uppercase; }
     .threshold-group { display:flex; align-items:center; gap:6px; }
     .threshold-group label { font-size:10px; color:var(--muted); }
     .threshold-group input {
@@ -245,11 +252,12 @@ HTML = """
     <div class="stat"><label>paused</label><div class="val" id="h-paused" style="color:var(--blue)">0</div></div>
     <div class="stat"><label>est. saved</label><div class="val good" id="h-saved">$0.00</div></div>
   </div>
+  <button class="settings-toggle" onclick="document.getElementById('settings-panel').classList.toggle('open')">⚙ Settings</button>
   <div class="live" id="live-dot"></div>
 </div>
 
-<div class="thresholds">
-  <span>thresholds</span>
+<div class="settings-panel" id="settings-panel">
+  <span>global defaults</span>
   <div class="threshold-group">
     <label>retries</label>
     <input type="number" id="t-retry" value="3" min="1">
@@ -263,8 +271,8 @@ HTML = """
     <input type="number" id="t-time" value="30" min="5">
   </div>
   <button class="btn-apply" onclick="applyThresholds()">Apply</button>
-  <div style="width:1px;background:var(--border);margin:0 8px;height:20px"></div>
-  <span style="font-size:10px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase">per-agent budget</span>
+  <div style="width:1px;background:var(--border);margin:0 4px;height:20px"></div>
+  <span>per-agent budget</span>
   <div class="threshold-group">
     <input type="text" id="b-agent" placeholder="agent-id" style="width:120px">
   </div>
@@ -273,6 +281,7 @@ HTML = """
     <input type="number" id="b-cap" value="0.10" min="0.01" step="0.01">
   </div>
   <button class="btn-apply" style="background:var(--orange)" onclick="applyBudget()">Set</button>
+  <span id="budget-msg" style="font-size:10px;transition:opacity .5s"></span>
 </div>
 
 <div class="main">
@@ -619,13 +628,7 @@ HTML = """
   }
 
   function showBudgetMsg(msg, color) {
-    let el = document.getElementById('budget-msg');
-    if (!el) {
-      el = document.createElement('span');
-      el.id = 'budget-msg';
-      el.style.cssText = 'font-size:10px;transition:opacity .5s';
-      document.querySelector('.thresholds').appendChild(el);
-    }
+    const el = document.getElementById('budget-msg');
     el.style.color = color;
     el.style.opacity = '1';
     el.textContent = msg;
