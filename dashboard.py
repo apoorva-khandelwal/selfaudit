@@ -28,6 +28,7 @@ def _flag_rec(state):
 
 app = Flask(__name__)
 _watcher = None
+_undo_stack = []  # list of (label, callable)
 
 HTML = """
 <!DOCTYPE html>
@@ -64,12 +65,14 @@ HTML = """
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
 
     /* settings panel */
-    .settings-toggle {
+    .settings-toggle, .undo-btn {
       background: transparent; border: 1px solid var(--border); color: var(--muted);
       font-family: inherit; font-size: 10px; padding: 3px 10px; border-radius: 4px;
       cursor: pointer; letter-spacing:.06em;
     }
-    .settings-toggle:hover { color: var(--text); border-color: var(--muted); }
+    .settings-toggle:hover, .undo-btn:hover { color: var(--text); border-color: var(--muted); }
+    .undo-btn:disabled { opacity: 0.3; cursor: default; }
+    .undo-btn:disabled:hover { color: var(--muted); border-color: var(--border); }
     .settings-panel {
       display: none; background: var(--surface); border-bottom: 1px solid var(--border);
       padding: 12px 24px; gap: 20px; flex-wrap: wrap; align-items: center;
@@ -252,6 +255,7 @@ HTML = """
     <div class="stat"><label>paused</label><div class="val" id="h-paused" style="color:var(--blue)">0</div></div>
     <div class="stat"><label>est. saved</label><div class="val good" id="h-saved">$0.00</div></div>
   </div>
+  <button class="undo-btn" id="undo-btn" onclick="undo()" disabled title="">↩ Undo</button>
   <button class="settings-toggle" onclick="document.getElementById('settings-panel').classList.toggle('open')">⚙ Settings</button>
   <div class="live" id="live-dot"></div>
 </div>
@@ -507,7 +511,22 @@ HTML = """
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({agent_id: agentId})
+    }).then(() => refreshUndoBtn());
+  }
+
+  function refreshUndoBtn() {
+    fetch('/api/undo_state').then(r => r.json()).then(d => {
+      const btn = document.getElementById('undo-btn');
+      btn.disabled = !d.available;
+      btn.title = d.label ? 'Undo: ' + d.label : '';
     });
+  }
+
+  function undo() {
+    fetch('/api/undo', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'})
+      .then(r => r.json()).then(d => {
+        if (d.ok) refreshUndoBtn();
+      });
   }
 
   function toggleNote(agentId, btn) {
@@ -524,7 +543,7 @@ HTML = """
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({agent_id: agentId, note})
-    });
+    }).then(() => refreshUndoBtn());
     input.value = '';
     const key = agentId.replace(/[^a-z0-9]/gi,'_');
     document.getElementById('note-' + key).classList.remove('open');
@@ -535,7 +554,7 @@ HTML = """
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({alert_id: alertId})
-    });
+    }).then(() => refreshUndoBtn());
   }
 
   function deleteAlert(alertId) {
@@ -569,7 +588,7 @@ HTML = """
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({agent_id: agentId, index, text: input.value})
-    });
+    }).then(() => refreshUndoBtn());
   }
 
   function cancelEditNote(agentId, index, original) {
@@ -587,7 +606,7 @@ HTML = """
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({agent_id: agentId, index})
-    });
+    }).then(() => refreshUndoBtn());
   }
 
   function renderReviewQueue(flags) {
@@ -644,6 +663,7 @@ HTML = """
       if (d.ok) {
         showBudgetMsg(`Budget $${cap.toFixed(2)} set for ${agent}`, 'var(--green)');
         document.getElementById('b-agent').value = '';
+        refreshUndoBtn();
       } else {
         showBudgetMsg(d.error, 'var(--red)');
       }
@@ -677,7 +697,7 @@ HTML = """
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify(body)
-    });
+    }).then(() => refreshUndoBtn());
   }
 
   function applyThresholds() {
@@ -689,7 +709,7 @@ HTML = """
         cost:  parseFloat(document.getElementById('t-cost').value),
         time:  parseFloat(document.getElementById('t-time').value),
       })
-    });
+    }).then(() => refreshUndoBtn());
   }
 </script>
 </body>
@@ -828,78 +848,130 @@ def stream():
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-@app.route("/api/pause",      methods=["POST"])
+def _push_undo(label, fn):
+    _undo_stack.append((label, fn))
+    if len(_undo_stack) > 20:
+        _undo_stack.pop(0)
+
+@app.route("/api/undo", methods=["POST"])
+def api_undo():
+    if not _undo_stack:
+        return jsonify(ok=False, error="Nothing to undo"), 400
+    label, fn = _undo_stack.pop()
+    try:
+        fn()
+        return jsonify(ok=True, label=label, remaining=len(_undo_stack),
+                       next_label=_undo_stack[-1][0] if _undo_stack else None)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
+
+@app.route("/api/undo_state", methods=["GET"])
+def api_undo_state():
+    return jsonify(
+        available=len(_undo_stack) > 0,
+        label=_undo_stack[-1][0] if _undo_stack else None,
+    )
+
+@app.route("/api/pause", methods=["POST"])
 def api_pause():
-    _watcher.pause(request.json["agent_id"]); return jsonify(ok=True)
+    aid = request.json["agent_id"]
+    _push_undo(f"pause {aid}", lambda: _watcher.resume(aid))
+    _watcher.pause(aid)
+    return jsonify(ok=True)
 
-@app.route("/api/resume",     methods=["POST"])
+@app.route("/api/resume", methods=["POST"])
 def api_resume():
-    _watcher.resume(request.json["agent_id"]); return jsonify(ok=True)
+    aid = request.json["agent_id"]
+    _push_undo(f"resume {aid}", lambda: _watcher.pause(aid))
+    _watcher.resume(aid)
+    return jsonify(ok=True)
 
-
-@app.route("/api/note",       methods=["POST"])
+@app.route("/api/note", methods=["POST"])
 def api_note():
-    _watcher.add_note(request.json["agent_id"], request.json["note"]); return jsonify(ok=True)
+    aid = request.json["agent_id"]
+    _watcher.add_note(aid, request.json["note"])
+    idx = len(_watcher.states[aid].notes) - 1
+    _push_undo(f"add note on {aid}", lambda i=idx: _watcher.delete_note(aid, i))
+    return jsonify(ok=True)
 
-@app.route("/api/dismiss",    methods=["POST"])
+@app.route("/api/dismiss", methods=["POST"])
 def api_dismiss():
-    _watcher.dismiss_alert(request.json["alert_id"]); return jsonify(ok=True)
+    alert_id = request.json["alert_id"]
+    _push_undo(f"dismiss alert", lambda: _watcher.undismiss_alert(alert_id))
+    _watcher.dismiss_alert(alert_id)
+    return jsonify(ok=True)
 
 @app.route("/api/delete_alert", methods=["POST"])
 def api_delete_alert():
-    _watcher.delete_alert(request.json["alert_id"]); return jsonify(ok=True)
+    # delete is not undoable
+    _watcher.delete_alert(request.json["alert_id"])
+    return jsonify(ok=True)
 
 @app.route("/api/edit_note", methods=["POST"])
 def api_edit_note():
     d = request.json
-    ok = _watcher.edit_note(d["agent_id"], d["index"], d["text"])
+    aid, idx = d["agent_id"], d["index"]
+    old_text = _watcher.states[aid].notes[idx] if aid in _watcher.states else None
+    ok = _watcher.edit_note(aid, idx, d["text"])
+    if ok and old_text is not None:
+        _push_undo(f"edit note on {aid}", lambda t=old_text: _watcher.edit_note(aid, idx, t))
     return jsonify(ok=ok)
 
 @app.route("/api/delete_note", methods=["POST"])
 def api_delete_note():
     d = request.json
-    ok = _watcher.delete_note(d["agent_id"], d["index"])
+    aid, idx = d["agent_id"], d["index"]
+    old_text = _watcher.states[aid].notes[idx] if aid in _watcher.states else None
+    ok = _watcher.delete_note(aid, idx)
+    if ok and old_text is not None:
+        _push_undo(f"delete note on {aid}", lambda t=old_text: _watcher.add_note(aid, t))
     return jsonify(ok=ok)
 
 @app.route("/api/set_budget", methods=["POST"])
 def api_set_budget():
     d = request.json
-    ok = _watcher.set_budget(d["agent_id"], d["budget_usd"])
-    if not ok:
-        return jsonify(ok=False, error=f"Agent '{d['agent_id']}' not found"), 404
-    return jsonify(ok=True)
+    aid = d["agent_id"]
+    if aid not in _watcher.states:
+        return jsonify(ok=False, error=f"Agent '{aid}' not found"), 404
+    old = _watcher.states[aid].budget_usd
+    ok = _watcher.set_budget(aid, d["budget_usd"])
+    if ok:
+        _push_undo(f"set budget on {aid}", lambda b=old: _watcher.set_budget(aid, b))
+    return jsonify(ok=ok)
 
 @app.route("/api/escalate", methods=["POST"])
 def api_escalate():
-    """Human reviewed a flag and decided it's actually broken — fire a full alert."""
-    agent_id = request.json["agent_id"]
-    _watcher.escalate_flag(agent_id)
+    aid = request.json["agent_id"]
+    _watcher.escalate_flag(aid)
     return jsonify(ok=True)
 
 @app.route("/api/clear_flag", methods=["POST"])
 def api_clear_flag():
-    """Human reviewed a flag and decided the agent is fine — clear it."""
     _watcher.unflag(agent_id=request.json["agent_id"])
     return jsonify(ok=True)
 
 @app.route("/api/thresholds", methods=["POST"])
 def api_thresholds():
     d = request.json
+    old = (_watcher.retry_threshold, _watcher.cost_threshold, _watcher.time_threshold)
     _watcher.set_thresholds(retry=d.get("retry"), cost=d.get("cost"), time=d.get("time"))
+    _push_undo("set global thresholds",
+               lambda o=old: _watcher.set_thresholds(retry=o[0], cost=o[1], time=o[2]))
     return jsonify(ok=True)
 
 @app.route("/api/agent_thresholds", methods=["POST"])
 def api_agent_thresholds():
     d = request.json
-    ok = _watcher.set_agent_thresholds(
-        d["agent_id"],
-        retry=d.get("retry"),
-        cost=d.get("cost"),
-        time=d.get("time"),
-    )
-    if not ok:
-        return jsonify(ok=False, error=f"Agent '{d['agent_id']}' not found"), 404
-    return jsonify(ok=True)
+    aid = d["agent_id"]
+    if aid not in _watcher.states:
+        return jsonify(ok=False, error=f"Agent '{aid}' not found"), 404
+    s = _watcher.states[aid]
+    old = (s.retry_threshold, s.cost_threshold, s.time_threshold)
+    ok = _watcher.set_agent_thresholds(aid, retry=d.get("retry"), cost=d.get("cost"), time=d.get("time"))
+    if ok:
+        _push_undo(f"set thresholds on {aid}",
+                   lambda o=old: _watcher.set_agent_thresholds(aid, retry=o[0], cost=o[1], time=o[2]))
+    return jsonify(ok=ok)
 
 
 def start(watcher, port=5050):

@@ -313,6 +313,14 @@ class Watcher:
                     break
         self._dirty.set()
 
+    def undismiss_alert(self, alert_id: str):
+        with self._lock:
+            for a in self.alerts:
+                if a.id == alert_id:
+                    a.dismissed = False
+                    break
+        self._dirty.set()
+
     def delete_alert(self, alert_id: str):
         with self._lock:
             self.alerts = [a for a in self.alerts if a.id != alert_id]
