@@ -51,25 +51,25 @@ def _build_recommendation(agent_id: str, model: Optional[str],
     model_label = model or "unknown model"
 
     if situation == "zero_progress":
-        headline = f"No progress after {retries} retries — ${cost:.4f} spent on {model_label}"
+        headline = f"{retries} retries, 0 steps completed. ${cost:.4f} on {model_label}"
         steps = [
-            "Fix the underlying issue first (bad prompt, API error, logic bug) — retrying a broken agent wastes money.",
-            f"Debug on a cheaper model. Don't spend {model_label} rates diagnosing the problem.",
+            "Something's broken upstream. Retrying won't help. Check the error first.",
+            f"Diagnose on a cheaper model before burning more {model_label} calls.",
         ]
     elif situation == "stuck_subtask":
-        headline = f"{progress} step(s) succeeded, then got stuck — {retries} retries on the same sub-task"
+        headline = f"Stalled after {progress} step(s), {retries} retries on the same call"
         steps = [
-            "The problem is isolated. Earlier steps don't need to re-run — only the failing sub-task needs fixing.",
-            f"Consider a cheaper model just for the failing sub-task; keep {model_label} for the steps that need it.",
+            f"The first {progress} step(s) are fine. Only the failing sub-task needs attention.",
+            f"Consider a cheaper model just for the stuck call; {model_label} isn't needed to retry a broken step.",
         ]
     elif situation == "high_cost_ratio":
-        headline = f"High cost per step — ${cost:.4f} for {progress} step(s) on {model_label}"
+        headline = f"${cost:.4f} for {progress} step(s) on {model_label}. Cost is high relative to output."
         steps = [
-            "Profile which steps consume the most tokens — usually a small number of calls drive most of the cost.",
-            f"Route cheap/repetitive steps to a cheaper model; reserve {model_label} for the complex ones.",
+            "Find the expensive call. One step usually accounts for most of it.",
+            f"Route simpler steps to a cheaper model; save {model_label} for what actually needs it.",
         ]
     else:
-        headline = f"Review {agent_id} — ${cost:.4f}, {progress} steps, {retries} retries on {model_label}"
+        headline = f"{agent_id}: ${cost:.4f}, {progress} steps, {retries} retries on {model_label}"
         steps = []
 
     return {"headline": headline, "steps": steps, "alternatives": alts}
@@ -280,7 +280,7 @@ class Watcher:
             cost     = state.cumulative_cost
             retries  = state.max_retry_count
             progress = state.progress_score
-        self._fire_alert(agent_id, "escalated by human reviewer after flag", cost, retries, progress)
+        self._fire_alert(agent_id, "escalated after review", cost, retries, progress)
         self._dirty.set()
 
     def add_note(self, agent_id: str, note: str):
@@ -479,7 +479,7 @@ class Watcher:
         threading.Thread(target=self._push_to_redis, daemon=True).start()
 
         if budget_hit:
-            print(f"\n[watcher] {agent_id} auto-paused — hit budget cap of ${snap_budget:.2f}")
+            print(f"\n[watcher] {agent_id} auto-paused: hit budget cap of ${snap_budget:.2f}")
 
         if should_eval:
             self._evaluate(agent_id, snap_retries, snap_cost,
@@ -495,11 +495,11 @@ class Watcher:
         # ── clear breach: all signals point to stuck ───────────────────────────
         clear_reasons = []
         if retries >= retry_t and progress == 0:
-            clear_reasons.append(f"retried same action {retries}x with zero successful steps")
+            clear_reasons.append(f"{retries} retries, 0 steps completed")
         if cost >= cost_t and progress == 0:
-            clear_reasons.append(f"spent ${cost:.4f} with no progress")
+            clear_reasons.append(f"${cost:.4f} spent, nothing to show for it")
         if elapsed > time_t and progress == 0:
-            clear_reasons.append(f"exceeded {time_t:.0f}s with no progress")
+            clear_reasons.append(f"stuck for {time_t:.0f}s with no output")
 
         if clear_reasons:
             with self._lock:
@@ -516,9 +516,9 @@ class Watcher:
         # Flag for human review instead of alerting outright.
         ambiguous_reasons = []
         if retries >= max(1, retry_t // 2) and progress > 0:
-            ambiguous_reasons.append(f"{retries} retries despite some progress — may be stuck on a sub-task")
+            ambiguous_reasons.append(f"{retries} retries, made some progress but may be stuck")
         if cost >= cost_t * 0.6 and progress > 0 and elapsed > time_t * 0.5:
-            ambiguous_reasons.append(f"${cost:.4f} spent with only {progress} step(s) — cost/progress ratio is high")
+            ambiguous_reasons.append(f"${cost:.4f} for {progress} step(s), cost looks high")
 
         if ambiguous_reasons:
             with self._lock:
@@ -528,12 +528,12 @@ class Watcher:
                     flag_reason = "; ".join(ambiguous_reasons)
                     state.notes.append(
                         f"[{datetime.datetime.now().strftime('%H:%M:%S')}] "
-                        f"[watcher] needs review — {flag_reason}"
+                        f"[watcher] flagged: {flag_reason}"
                     )
                 else:
                     return
             self._dirty.set()
-            print(f"\n[watcher] {agent_id} flagged for review — {'; '.join(ambiguous_reasons)}")
+            print(f"\n[watcher] {agent_id} flagged for review: {'; '.join(ambiguous_reasons)}")
 
     def _fire_alert(self, agent_id, reason, cost, retries, progress):
         try:

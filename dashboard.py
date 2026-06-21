@@ -16,7 +16,7 @@ def _flag_rec(state):
     # pick situation from the watcher note
     notes = [n for n in state.notes if "[watcher]" in n]
     last = notes[-1] if notes else ""
-    if "cost/progress ratio" in last:
+    if "cost looks high" in last:
         situation = "high_cost_ratio"
     else:
         situation = "stuck_subtask"
@@ -36,15 +36,17 @@ HTML = """
 <head>
   <meta charset="UTF-8">
   <title>SelfAudit</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
-      --bg: #0a0a0a; --surface: #141414; --surface2: #1a1a1a;
-      --border: #222; --text: #e0e0e0; --muted: #555;
-      --green: #30d158; --red: #ff3b30; --orange: #ff9f0a;
-      --blue: #0a84ff; --purple: #bf5af2;
+      --bg: #0d0f14; --surface: #151821; --surface2: #1c1f2b;
+      --border: #252836; --text: #dde1ec; --muted: #5a6080;
+      --green: #4ade80; --red: #f87171; --orange: #fbbf24;
+      --blue: #60a5fa; --purple: #a78bfa;
     }
-    body { background: var(--bg); color: var(--text); font-family: 'SF Mono','Menlo','Consolas',monospace; font-size: 13px; }
+    body { background: var(--bg); color: var(--text); font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; font-size: 13px; }
 
     /* header */
     .header {
@@ -53,8 +55,8 @@ HTML = """
       border-bottom: 1px solid var(--border);
       padding: 12px 24px; display: flex; align-items: center; gap: 28px;
     }
-    .logo { font-size: 15px; font-weight: 700; color: #fff; letter-spacing:.05em; }
-    .logo span { color: var(--green); }
+    .logo { font-size: 15px; font-weight: 700; color: #fff; letter-spacing:-.01em; }
+    .logo span { color: var(--purple); }
     .stats { display: flex; gap: 20px; flex: 1; }
     .stat label { display:block; font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); margin-bottom:2px; }
     .stat .val { font-size:14px; font-weight:600; }
@@ -67,8 +69,8 @@ HTML = """
     /* settings panel */
     .settings-toggle, .undo-btn {
       background: transparent; border: 1px solid var(--border); color: var(--muted);
-      font-family: inherit; font-size: 10px; padding: 3px 10px; border-radius: 4px;
-      cursor: pointer; letter-spacing:.06em;
+      font-family: inherit; font-size: 11px; padding: 4px 12px; border-radius: 6px;
+      cursor: pointer; letter-spacing:.02em; font-weight: 500;
     }
     .settings-toggle:hover, .undo-btn:hover { color: var(--text); border-color: var(--muted); }
     .undo-btn:disabled { opacity: 0.3; cursor: default; }
@@ -86,9 +88,9 @@ HTML = """
       font-family: inherit; font-size: 11px; padding: 3px 6px; border-radius: 4px; width: 60px;
     }
     .btn-apply {
-      background: var(--blue); color: #fff; border: none; border-radius: 4px;
-      font-family: inherit; font-size: 10px; font-weight:600; padding: 4px 10px;
-      cursor: pointer; letter-spacing:.06em;
+      background: var(--blue); color: #fff; border: none; border-radius: 6px;
+      font-family: inherit; font-size: 11px; font-weight:600; padding: 4px 12px;
+      cursor: pointer; letter-spacing:.02em;
     }
     .btn-apply:hover { opacity:.85; }
 
@@ -104,10 +106,10 @@ HTML = """
       border-radius: 10px; padding: 16px;
       transition: border-color .25s, box-shadow .25s;
     }
-    .card.alerted  { border-color:var(--red);    box-shadow:0 0 20px rgba(255,59,48,.1); }
-    .card.done     { border-color:#1e3a26; }
-    .card.paused   { border-color:var(--blue);   box-shadow:0 0 20px rgba(10,132,255,.08); opacity:.7; }
-    .card.flagged  { border-color:var(--orange); box-shadow:0 0 20px rgba(255,159,10,.1); }
+    .card.alerted  { border-color:rgba(248,113,113,.5);  box-shadow:0 0 24px rgba(248,113,113,.08); }
+    .card.done     { border-color:rgba(74,222,128,.25); }
+    .card.paused   { border-color:rgba(96,165,250,.4);  box-shadow:0 0 24px rgba(96,165,250,.06); opacity:.75; }
+    .card.flagged  { border-color:rgba(251,191,36,.5);  box-shadow:0 0 24px rgba(251,191,36,.08); }
 
     .card-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
     .agent-name { font-size:13px; font-weight:600; color:#fff; display:flex; align-items:center; gap:6px; }
@@ -117,12 +119,12 @@ HTML = """
     .pulse.blue   { background:var(--blue); animation:none; }
     .pulse.off    { background:#2a2a2a; animation:none; }
 
-    .badge { font-size:9px; font-weight:700; letter-spacing:.1em; padding:3px 7px; border-radius:4px; text-transform:uppercase; }
-    .badge.running { background:#0d2b18; color:var(--green); }
-    .badge.alerted { background:#2b0d0d; color:var(--red); }
-    .badge.done    { background:#0d2b18; color:#34c759; }
-    .badge.paused  { background:#0a1f2e; color:var(--blue); }
-    .badge.flagged { background:#2b1d0d; color:var(--orange); }
+    .badge { font-size:9px; font-weight:600; letter-spacing:.06em; padding:3px 8px; border-radius:20px; text-transform:uppercase; }
+    .badge.running { background:rgba(74,222,128,.12); color:var(--green); }
+    .badge.alerted { background:rgba(248,113,113,.12); color:var(--red); }
+    .badge.done    { background:rgba(74,222,128,.1);  color:#86efac; }
+    .badge.paused  { background:rgba(96,165,250,.12); color:var(--blue); }
+    .badge.flagged { background:rgba(251,191,36,.12); color:var(--orange); }
 
     .metrics { display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:8px; margin-bottom:10px; }
     .metric label { display:block; font-size:9px; color:var(--muted); letter-spacing:.08em; text-transform:uppercase; margin-bottom:2px; }
@@ -131,7 +133,7 @@ HTML = """
     .metric .val.good   { color:var(--green); }
     .metric .val.warn   { color:var(--orange); }
 
-    .bar-wrap { background:#1a1a1a; border-radius:3px; height:3px; margin-bottom:10px; overflow:hidden; }
+    .bar-wrap { background:var(--surface2); border-radius:3px; height:3px; margin-bottom:10px; overflow:hidden; }
     .bar { height:100%; border-radius:3px; background:var(--green); transition:width .4s ease; }
     .bar.danger { background:var(--red); }
     .bar.warn   { background:var(--orange); }
@@ -139,24 +141,24 @@ HTML = """
 
     .actions { display:flex; flex-direction:column; gap:3px; margin-bottom:10px; }
     .action-row { display:flex; align-items:center; gap:6px; font-size:11px; color:var(--muted); }
-    .action-row.success { color:#3a7a50; }
-    .action-row.fail    { color:#7a3030; }
+    .action-row.success { color:#4ade8088; }
+    .action-row.fail    { color:#f8717166; }
 
     /* controls */
     .controls { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; padding-top:10px; border-top:1px solid var(--border); }
     .btn {
-      font-family:inherit; font-size:10px; font-weight:600; letter-spacing:.06em;
-      padding:4px 10px; border-radius:4px; border:1px solid; cursor:pointer;
+      font-family:inherit; font-size:10px; font-weight:500; letter-spacing:.04em;
+      padding:4px 10px; border-radius:6px; border:1px solid; cursor:pointer;
       background:transparent; transition:background .15s;
     }
-    .btn-pause  { border-color:#1a3a5a; color:var(--blue); }
-    .btn-pause:hover  { background:#0a1f2e; }
-    .btn-resume { border-color:#1a3a5a; color:var(--blue); }
-    .btn-resume:hover { background:#0a1f2e; }
-    .btn-flag   { border-color:#3a2a0a; color:var(--orange); }
-    .btn-flag:hover   { background:#2b1d0d; }
-    .btn-unflag { border-color:#3a2a0a; color:var(--orange); }
-    .btn-unflag:hover { background:#2b1d0d; }
+    .btn-pause  { border-color:rgba(96,165,250,.35); color:var(--blue); }
+    .btn-pause:hover  { background:rgba(96,165,250,.1); }
+    .btn-resume { border-color:rgba(96,165,250,.35); color:var(--blue); }
+    .btn-resume:hover { background:rgba(96,165,250,.1); }
+    .btn-flag   { border-color:rgba(251,191,36,.35); color:var(--orange); }
+    .btn-flag:hover   { background:rgba(251,191,36,.1); }
+    .btn-unflag { border-color:rgba(251,191,36,.35); color:var(--orange); }
+    .btn-unflag:hover { background:rgba(251,191,36,.1); }
     .btn-note   { border-color:var(--border); color:var(--muted); }
     .btn-note:hover   { background:var(--surface2); color:var(--text); }
 
@@ -172,7 +174,7 @@ HTML = """
 
     /* notes list */
     .notes-list { margin-top:8px; display:flex; flex-direction:column; gap:3px; }
-    .note-item { font-size:10px; color:var(--muted); padding:3px 0; border-bottom:1px solid #1a1a1a; display:flex; align-items:center; gap:6px; }
+    .note-item { font-size:10px; color:var(--muted); padding:3px 0; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:6px; }
     .note-text { flex:1; }
     .note-edit-input { flex:1; background:var(--surface2); border:1px solid var(--border); color:var(--text); font-family:inherit; font-size:10px; padding:2px 6px; border-radius:3px; }
     .note-btn { background:none; border:none; cursor:pointer; font-size:9px; color:var(--muted); padding:0 2px; }
@@ -187,8 +189,8 @@ HTML = """
     /* review queue */
     .review-queue { border-top:1px solid var(--border); padding-top:24px; margin-bottom:32px; }
     .review-entry {
-      background:var(--surface); border:1px solid #3a2a0a; border-left:3px solid var(--orange);
-      border-radius:6px; padding:12px 14px; margin-bottom:8px;
+      background:var(--surface); border:1px solid rgba(251,191,36,.2); border-left:3px solid var(--orange);
+      border-radius:8px; padding:12px 14px; margin-bottom:8px;
     }
     .review-meta { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
     .review-agent { font-weight:700; color:var(--orange); font-size:12px; }
@@ -196,23 +198,23 @@ HTML = """
     .review-reason { color:#ccc; font-size:12px; margin-bottom:8px; }
     .review-actions { display:flex; gap:8px; }
     .btn-escalate {
-      background:transparent; border:1px solid #5a1a1a; color:var(--red);
+      background:transparent; border:1px solid rgba(248,113,113,.35); color:var(--red);
       font-family:inherit; font-size:10px; font-weight:600; padding:4px 10px;
-      border-radius:4px; cursor:pointer; letter-spacing:.06em;
+      border-radius:6px; cursor:pointer; letter-spacing:.04em;
     }
-    .btn-escalate:hover { background:#2b0d0d; }
+    .btn-escalate:hover { background:rgba(248,113,113,.1); }
     .btn-clear {
       background:transparent; border:1px solid var(--border); color:var(--muted);
       font-family:inherit; font-size:10px; padding:4px 10px;
-      border-radius:4px; cursor:pointer;
+      border-radius:6px; cursor:pointer;
     }
     .btn-clear:hover { color:var(--text); border-color:var(--muted); }
 
     /* alert log */
     .alert-log { border-top:1px solid var(--border); padding-top:24px; }
     .alert-entry {
-      background:var(--surface); border:1px solid #2b0d0d; border-left:3px solid var(--red);
-      border-radius:6px; padding:12px 14px; margin-bottom:8px;
+      background:var(--surface); border:1px solid rgba(248,113,113,.2); border-left:3px solid var(--red);
+      border-radius:8px; padding:12px 14px; margin-bottom:8px;
     }
     .alert-entry.dismissed { opacity:.35; }
     .alert-meta { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
@@ -221,22 +223,22 @@ HTML = """
     .alert-reason { color:#ccc; margin-bottom:8px; font-size:12px; }
     .alert-actions { display:flex; gap:6px; align-items:center; margin-top:8px; }
     .btn-rec {
-      background:transparent; border:1px solid #3a2a0a; color:var(--orange);
+      background:transparent; border:1px solid rgba(251,191,36,.35); color:var(--orange);
       font-family:inherit; font-size:10px; font-weight:600; padding:4px 10px;
-      border-radius:4px; cursor:pointer; letter-spacing:.04em;
+      border-radius:6px; cursor:pointer; letter-spacing:.04em;
     }
-    .btn-rec:hover { background:#2b1d0d; }
-    .btn-rec.open  { background:#2b1d0d; }
+    .btn-rec:hover { background:rgba(251,191,36,.1); }
+    .btn-rec.open  { background:rgba(251,191,36,.1); }
     .btn-dismiss-sm {
       background:transparent; border:1px solid var(--border); color:var(--muted);
-      font-family:inherit; font-size:10px; padding:4px 10px; border-radius:4px; cursor:pointer;
+      font-family:inherit; font-size:10px; padding:4px 10px; border-radius:6px; cursor:pointer;
     }
     .btn-dismiss-sm:hover { color:var(--text); border-color:var(--muted); }
     .btn-delete-sm {
-      background:transparent; border:1px solid #3a1a1a; color:var(--red);
-      font-family:inherit; font-size:10px; padding:4px 10px; border-radius:4px; cursor:pointer;
+      background:transparent; border:1px solid rgba(248,113,113,.3); color:var(--red);
+      font-family:inherit; font-size:10px; padding:4px 10px; border-radius:6px; cursor:pointer;
     }
-    .btn-delete-sm:hover { background:#2b0d0d; }
+    .btn-delete-sm:hover { background:rgba(248,113,113,.1); }
     .rec-panel { display:none; margin-top:10px; padding:10px 12px; background:var(--surface2); border-radius:6px; border:1px solid var(--border); }
     .rec-panel.open { display:block; }
     .alert-rec { color:var(--muted); font-size:11px; line-height:1.6; }
@@ -246,7 +248,7 @@ HTML = """
 <body>
 
 <div class="header">
-  <div class="logo">Self<span>Audit</span></div>
+  <div class="logo">self<span>audit</span></div>
   <div class="stats">
     <div class="stat"><label>total cost</label><div class="val" id="h-cost">$0.0000</div></div>
     <div class="stat"><label>alerts</label><div class="val danger" id="h-alerts">0</div></div>
@@ -294,7 +296,7 @@ HTML = """
   </div>
   <div class="review-queue">
     <div class="section-title">flagged for review</div>
-    <div id="review-queue"><div class="empty-log">no flags yet — watcher will flag agents in the ambiguous zone</div></div>
+    <div id="review-queue"><div class="empty-log">nothing flagged</div></div>
   </div>
 
   <div class="alert-log">
@@ -610,7 +612,7 @@ HTML = """
   function renderReviewQueue(flags) {
     const el = document.getElementById('review-queue');
     if (!flags || !flags.length) {
-      el.innerHTML = '<div class="empty-log">no flags yet — watcher will flag agents in the ambiguous zone</div>';
+      el.innerHTML = '<div class="empty-log">nothing flagged</div>';
       return;
     }
     el.innerHTML = flags.map(f => `
@@ -628,7 +630,7 @@ HTML = """
         </div>
         <div class="review-actions">
           <button class="btn-escalate" onclick="escalate('${f.agent_id}')">⛔ Escalate to Alert</button>
-          <button class="btn-clear"    onclick="clearFlag('${f.agent_id}')">✓ Looks fine — clear</button>
+          <button class="btn-clear"    onclick="clearFlag('${f.agent_id}')">✓ Looks fine, clear</button>
         </div>
       </div>`).join('');
   }
