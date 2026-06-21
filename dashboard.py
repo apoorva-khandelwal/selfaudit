@@ -357,53 +357,62 @@ HTML = """
     const progCls  = a.progress > 0 ? ' good' : '';
     const retryCls = a.retries >= 3 ? ' danger' : a.retries >= 2 ? ' warn' : '';
 
-    const actionsHTML = (a.recent_actions||[]).map(r =>
+    // deduplicate repeated actions — show "call_api ×5" instead of 5 rows
+    const actionMap = [];
+    (a.recent_actions||[]).forEach(r => {
+      const last = actionMap[actionMap.length - 1];
+      if (last && last.action === r.action && last.success === r.success) {
+        last.count++; last.cost = (parseFloat(last.cost) + parseFloat(r.cost)).toFixed(4);
+      } else {
+        actionMap.push({...r, count: 1, cost: r.cost});
+      }
+    });
+    const actionsHTML = actionMap.map(r =>
       `<div class="action-row ${r.success?'success':'fail'}">
-        <span>${r.success?'✓':'✗'}</span><span>${r.action}</span>
+        <span>${r.success?'✓':'✗'}</span>
+        <span>${r.action}${r.count>1?` <span style="color:var(--muted)">×${r.count}</span>`:''}</span>
         <span style="margin-left:auto;font-size:10px">$${r.cost}</span>
       </div>`).join('') || '<div class="action-row">no actions yet</div>';
 
-    const notesHTML = (a.notes||[]).map(n =>
+    // only show user-added notes in the card (watcher notes are in the review queue)
+    const userNotes = (a.notes||[]).filter(n => !n.text.includes('[watcher]'));
+    const notesHTML = userNotes.map(n =>
       `<div class="note-item" id="note-item-${a.agent_id.replace(/[^a-z0-9]/gi,'_')}-${n.i}">
-        <span class="note-text">${n.text}</span>
+        <span class="note-text" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${n.text}</span>
         <button class="note-btn" title="Edit" onclick="startEditNote('${a.agent_id}',${n.i},this)">✎</button>
         <button class="note-btn" title="Delete" onclick="deleteNote('${a.agent_id}',${n.i})">✕</button>
       </div>`).join('');
 
-    const modelTag      = a.model ? `<span style="font-size:9px;color:var(--muted);margin-left:4px">[${a.model}]</span>` : '';
-    const alertCallout  = a.alert_reason  ? `<div class="callout red">${a.alert_reason}</div>` : '';
-    const flagCallout   = a.flagged && !a.alert_reason ? `<div class="callout orange">⚠ flagged for human review</div>` : '';
-    const pauseCallout  = a.paused ? `<div class="callout blue">⏸ paused — not accumulating cost</div>` : '';
-    const projCallout   = (!a.paused && !a.completed && a.proj_1h > 0.01)
-      ? `<div class="callout" style="border-color:#555;background:rgba(255,255,255,.03);color:#888;margin-top:8px">
-           📈 at current rate: <strong style="color:#ccc">$${a.proj_1h}/hr</strong>${a.budget ? ` · budget $${a.budget}` : ''}
-         </div>` : '';
+    const modelTag     = a.model ? `<div style="font-size:9px;color:var(--muted);margin-top:2px">${a.model}</div>` : '';
+    const alertCallout = a.alert_reason ? `<div class="callout red">${a.alert_reason}</div>` : '';
+    const flagCallout  = a.flagged && !a.alert_reason ? `<div class="callout orange">⚠ flagged for human review</div>` : '';
+    const pauseCallout = a.paused ? `<div class="callout blue">⏸ paused</div>` : '';
+    const projLine     = (!a.paused && !a.completed && parseFloat(a.proj_1h) > 0.01)
+      ? `<div style="font-size:10px;color:#555;margin-top:6px">at current rate: <span style="color:#888">$${a.proj_1h}/hr</span>${a.budget?` · cap <span style="color:#aaa">$${a.budget}</span>`:''}</div>` : '';
 
-    const pauseBtn  = a.paused
+    const pauseBtn = a.paused
       ? `<button class="btn btn-resume" onclick="api('resume','${a.agent_id}')">▶ Resume</button>`
       : `<button class="btn btn-pause"  onclick="api('pause','${a.agent_id}')">⏸ Pause</button>`;
-    const flagBtn = '';
 
     card.innerHTML = `
       <div class="card-top">
-        <span class="agent-name"><span class="pulse ${pulse}"></span>${a.agent_id}${modelTag}</span>
+        <div><span class="agent-name"><span class="pulse ${pulse}"></span>${a.agent_id}</span>${modelTag}</div>
         <span class="badge ${badge}">${label}</span>
       </div>
       <div class="metrics">
         <div class="metric"><label>cost</label><div class="val${costCls}">$${a.cost}</div></div>
-        <div class="metric"><label>steps <span style="font-size:8px;color:var(--muted)">${a.progress_mode==='total'?'total':'uniq'}</span></label><div class="val${progCls}">${a.progress}</div></div>
+        <div class="metric"><label>steps</label><div class="val${progCls}">${a.progress}</div></div>
         <div class="metric"><label>retries</label><div class="val${retryCls}">${a.retries}</div></div>
         <div class="metric"><label>elapsed</label><div class="val">${a.elapsed}s</div></div>
       </div>
       <div class="bar-wrap"><div class="bar ${barCls}" style="width:${costPct}%"></div></div>
       <div class="actions">${actionsHTML}</div>
-      ${alertCallout}${flagCallout}${pauseCallout}${projCallout}
-      ${notesHTML ? `<div class="notes-list">${notesHTML}</div>` : ''}
+      ${alertCallout}${flagCallout}${pauseCallout}${projLine}
+      ${notesHTML ? `<div class="notes-list" style="margin-top:8px">${notesHTML}</div>` : ''}
       <div class="controls">
         ${pauseBtn}
-        ${flagBtn}
         <button class="btn btn-note" onclick="toggleNote('${a.agent_id}', this)">✎ Note</button>
-        <button class="btn btn-note" onclick="toggleThresh('${a.agent_id}')">⚙ Thresholds</button>
+        <button class="btn btn-note" onclick="toggleThresh('${a.agent_id}')">⚙</button>
       </div>
       <div class="note-row" id="note-${a.agent_id.replace(/[^a-z0-9]/gi,'_')}">
         <input class="note-input" type="text" placeholder="add a note..." onkeydown="if(event.key==='Enter')sendNote('${a.agent_id}',this)">
