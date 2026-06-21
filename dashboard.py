@@ -202,22 +202,34 @@ HTML = """
     .alert-log { border-top:1px solid var(--border); padding-top:24px; }
     .alert-entry {
       background:var(--surface); border:1px solid #2b0d0d; border-left:3px solid var(--red);
-      border-radius:6px; padding:12px 14px; margin-bottom:8px; position:relative;
+      border-radius:6px; padding:12px 14px; margin-bottom:8px;
     }
-    .alert-entry.peer   { border-color:#2b1d0d; border-left-color:var(--orange); }
     .alert-entry.dismissed { opacity:.35; }
-    .alert-meta { display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; }
+    .alert-meta { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
     .alert-agent { font-weight:700; color:var(--red); font-size:12px; }
-    .alert-entry.peer .alert-agent { color:var(--orange); }
     .alert-time  { font-size:10px; color:var(--muted); }
-    .alert-reason { color:#ccc; margin-bottom:4px; font-size:12px; }
-    .alert-rec    { color:var(--muted); font-size:11px; line-height:1.6; }
-    .btn-dismiss {
-      position:absolute; top:10px; right:12px;
-      background:transparent; border:1px solid var(--border); color:var(--muted);
-      font-family:inherit; font-size:9px; padding:2px 7px; border-radius:3px; cursor:pointer;
+    .alert-reason { color:#ccc; margin-bottom:8px; font-size:12px; }
+    .alert-actions { display:flex; gap:6px; align-items:center; margin-top:8px; }
+    .btn-rec {
+      background:transparent; border:1px solid #3a2a0a; color:var(--orange);
+      font-family:inherit; font-size:10px; font-weight:600; padding:4px 10px;
+      border-radius:4px; cursor:pointer; letter-spacing:.04em;
     }
-    .btn-dismiss:hover { color:var(--text); border-color:var(--muted); }
+    .btn-rec:hover { background:#2b1d0d; }
+    .btn-rec.open  { background:#2b1d0d; }
+    .btn-dismiss-sm {
+      background:transparent; border:1px solid var(--border); color:var(--muted);
+      font-family:inherit; font-size:10px; padding:4px 10px; border-radius:4px; cursor:pointer;
+    }
+    .btn-dismiss-sm:hover { color:var(--text); border-color:var(--muted); }
+    .btn-delete-sm {
+      background:transparent; border:1px solid #3a1a1a; color:var(--red);
+      font-family:inherit; font-size:10px; padding:4px 10px; border-radius:4px; cursor:pointer;
+    }
+    .btn-delete-sm:hover { background:#2b0d0d; }
+    .rec-panel { display:none; margin-top:10px; padding:10px 12px; background:var(--surface2); border-radius:6px; border:1px solid var(--border); }
+    .rec-panel.open { display:block; }
+    .alert-rec { color:var(--muted); font-size:11px; line-height:1.6; }
     .empty-log { color:var(--muted); font-size:12px; padding:12px 0; }
   </style>
 </head>
@@ -408,18 +420,28 @@ HTML = """
     const log = document.getElementById('alert-log');
     if (!alerts||!alerts.length) { log.innerHTML='<div class="empty-log">no alerts yet</div>'; return; }
     log.innerHTML = [...alerts].reverse().map(a => `
-      <div class="alert-entry ${a.dismissed?'dismissed':''} ${a.type==='peer'?'peer':''}">
+      <div class="alert-entry ${a.dismissed?'dismissed':''}">
         <div class="alert-meta">
-          <span class="alert-agent">${a.type==='peer'?'⚠ PEER — ':'⛔ ALERT — '}${a.agent_id}</span>
+          <span class="alert-agent">⛔ ${a.agent_id}</span>
           <span class="alert-time">${a.time}</span>
         </div>
         <div class="alert-reason">${a.reason}</div>
-        <div class="alert-rec">${renderRec(a.recommendation)}</div>
-        ${a.id ? `
-          <button class="btn-dismiss" onclick="dismissAlert('${a.id}')" style="right:44px">${a.dismissed?'Dismissed':'Dismiss'}</button>
-          <button class="btn-dismiss" onclick="deleteAlert('${a.id}')" style="color:var(--red);border-color:#3a1a1a">Delete</button>
-        ` : ''}
+        <div class="alert-actions">
+          ${a.recommendation ? `<button class="btn-rec" id="rec-btn-${a.id}" onclick="toggleRec('${a.id}')">💡 Recommendation</button>` : ''}
+          ${a.id && !a.dismissed ? `<button class="btn-dismiss-sm" onclick="dismissAlert('${a.id}')">Dismiss</button>` : ''}
+          ${a.id ? `<button class="btn-delete-sm" onclick="deleteAlert('${a.id}')">Delete</button>` : ''}
+        </div>
+        ${a.recommendation ? `<div class="rec-panel" id="rec-${a.id}"><div class="alert-rec">${renderRec(a.recommendation)}</div></div>` : ''}
       </div>`).join('');
+  }
+
+  function toggleRec(alertId) {
+    const panel = document.getElementById('rec-' + alertId);
+    const btn   = document.getElementById('rec-btn-' + alertId);
+    if (!panel) return;
+    const open = panel.classList.toggle('open');
+    btn.classList.toggle('open', open);
+    btn.textContent = open ? '💡 Hide' : '💡 Recommendation';
   }
 
   function renderRec(rec) {
