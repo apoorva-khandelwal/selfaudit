@@ -248,7 +248,20 @@ HTML = """
 <body>
 
 <div class="header">
-  <div class="logo">self<span>audit</span></div>
+  <div class="logo" style="display:flex;align-items:center;gap:10px">
+    <svg width="50" height="50" viewBox="0 0 200 130" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M5 65 Q100 5 195 65 Q100 125 5 65 Z" stroke="#3a3f4a" stroke-width="3"/>
+      <circle cx="100" cy="65" r="42" stroke="#3a3f4a" stroke-width="3"/>
+      <line x1="100" y1="65" x2="100" y2="98" stroke="#3a3f4a" stroke-width="2"/>
+      <line x1="68" y1="38" x2="62" y2="32" stroke="#3a3f4a" stroke-width="2"/>
+      <line x1="132" y1="38" x2="138" y2="32" stroke="#3a3f4a" stroke-width="2"/>
+      <line x1="100" y1="23" x2="100" y2="15" stroke="#3a3f4a" stroke-width="2"/>
+      <path d="M70 88 L130 40" stroke="var(--purple)" stroke-width="5" stroke-linecap="round"/>
+      <circle cx="100" cy="65" r="10" fill="var(--purple)"/>
+      <circle cx="130" cy="40" r="7" fill="var(--purple)"/>
+    </svg>
+    self<span>audit</span>
+  </div>
   <div class="stats">
     <div class="stat"><label>total cost</label><div class="val" id="h-cost">$0.0000</div></div>
     <div class="stat"><label>alerts</label><div class="val danger" id="h-alerts">0</div></div>
@@ -820,9 +833,10 @@ def stream():
         if _watcher:
             # local mode: use threading.Event
             while True:
-                changed = _watcher._dirty.wait(timeout=2.0)
-                if changed and _watcher.states:
+                changed = _watcher._dirty.wait(timeout=1.0)
+                if changed:
                     _watcher._dirty.clear()
+                if _watcher.states:
                     yield f"data: {json.dumps(_snapshot(_watcher))}\n\n"
         else:
             # viewer mode (friend's machine): subscribe to Redis pub/sub
