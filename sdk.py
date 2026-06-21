@@ -15,7 +15,7 @@ Quickstart:
         if result.ok:
             t.success(cost_usd=0.001)
         else:
-            t.fail()                   # watcher counts retries per action
+            t.fail()
 """
 
 import os
@@ -24,13 +24,18 @@ import threading
 import datetime
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
+
+from models import get_cheaper_alternatives, format_tradeoffs
 
 _ANTHROPIC_PRICES = {
     "claude-opus-4-8":   (5.00 / 1_000_000, 25.00 / 1_000_000),
     "claude-sonnet-4-6": (3.00 / 1_000_000, 15.00 / 1_000_000),
     "claude-haiku-4-5":  (1.00 / 1_000_000,  5.00 / 1_000_000),
 }
+
+_MODEL_ALTERNATIVES   = get_cheaper_alternatives("claude-opus-4-8", 5.00)
+_MODEL_TRADEOFFS_TEXT = format_tradeoffs(_MODEL_ALTERNATIVES)
 
 RETRY_ALERT_THRESHOLD    = 3
 COST_STALL_THRESHOLD_USD = 0.05
@@ -59,7 +64,12 @@ class _State:
     retry_counts: Dict[str, int] = field(default_factory=dict)
     completed: bool = False
     alerted: bool = False
+    paused: bool = False
+    flagged: bool = False
+    notes: List[str] = field(default_factory=list)
     peer_verdict: Optional[dict] = None
+    peer_judge_running: bool = False
+    budget_usd: Optional[float] = None   # hard cap; None = no cap
     start_time: float = field(default_factory=time.time)
 
     @property
@@ -75,6 +85,16 @@ class _State:
         return max(self.retry_counts.values(), default=0)
 
     @property
+    def cost_rate_per_min(self) -> float:
+        """Average spend per minute since start."""
+        elapsed_min = self.elapsed / 60.0
+        return (self.cumulative_cost / elapsed_min) if elapsed_min > 0.01 else 0.0
+
+    @property
+    def projected_cost_1h(self) -> float:
+        return self.cost_rate_per_min * 60.0
+
+    @property
     def elapsed(self) -> float:
         return time.time() - self.start_time
 
@@ -87,7 +107,9 @@ class Alert:
     retry_count: int
     progress_score: int
     recommendation: str
+    id: str = field(default_factory=lambda: str(time.time()))
     timestamp: float = field(default_factory=time.time)
+    dismissed: bool = False
 
 
 # ── trace handle ───────────────────────────────────────────────────────────────
@@ -99,8 +121,7 @@ class TraceHandle:
         self._action   = action
         self._resolved = False
 
-    def success(self, cost_usd: float = 0.0, completed: bool = False,
-                output: str = ""):
+    def success(self, cost_usd: float = 0.0, completed: bool = False, output: str = ""):
         self._resolved = True
         self._watcher._record(self._agent_id, self._action,
                                cost_usd=cost_usd, success=True,
@@ -111,9 +132,7 @@ class TraceHandle:
         in_p, out_p = _ANTHROPIC_PRICES.get(model, (5e-6, 25e-6))
         usage = response.usage
         cost = usage.input_tokens * in_p + usage.output_tokens * out_p
-        output = ""
-        if response.content:
-            output = getattr(response.content[0], "text", "")
+        output = getattr(response.content[0], "text", "") if response.content else ""
         self.success(cost_usd=round(cost, 6), completed=completed, output=output)
 
     def fail(self, cost_usd: float = 0.0):
@@ -138,16 +157,18 @@ class Watcher:
     """
 
     def __init__(self,
-                 retry_threshold: int   = RETRY_ALERT_THRESHOLD,
-                 cost_threshold:  float = COST_STALL_THRESHOLD_USD,
-                 time_threshold:  float = EXPECTED_TASK_SECONDS,
-                 task_description: str  = "",
-                 peer_judge: bool       = False,
+                 retry_threshold:  int   = RETRY_ALERT_THRESHOLD,
+                 cost_threshold:   float = COST_STALL_THRESHOLD_USD,
+                 time_threshold:   float = EXPECTED_TASK_SECONDS,
+                 task_description: str   = "",
+                 peer_judge:       bool  = False,
                  on_alert=None):
         self.states: Dict[str, _State] = {}
         self.alerts: List[Alert] = []
         self.peer_alerts: List[dict] = []
+        self.cost_saved_usd: float = 0.0  # estimated savings from pausing alerted agents
         self._lock             = threading.Lock()
+        self._dirty            = threading.Event()
         self._retry_threshold  = retry_threshold
         self._cost_threshold   = cost_threshold
         self._time_threshold   = time_threshold
@@ -155,7 +176,7 @@ class Watcher:
         self._peer_judge       = peer_judge and bool(os.environ.get("ANTHROPIC_API_KEY"))
         self._on_alert         = on_alert or self._print_alert
 
-    # ── public API ─────────────────────────────────────────────────────────────
+    # ── public control API ─────────────────────────────────────────────────────
 
     @contextmanager
     def trace(self, agent_id: str, action: str):
@@ -168,10 +189,83 @@ class Watcher:
         finally:
             handle._auto_fail_if_unresolved()
 
+    def pause(self, agent_id: str):
+        with self._lock:
+            if agent_id in self.states:
+                self.states[agent_id].paused = True
+        self._dirty.set()
+
+    def resume(self, agent_id: str):
+        with self._lock:
+            if agent_id in self.states:
+                self.states[agent_id].paused = False
+        self._dirty.set()
+
+    def flag(self, agent_id: str):
+        """Mark an agent for human review."""
+        with self._lock:
+            if agent_id in self.states:
+                self.states[agent_id].flagged = True
+        self._dirty.set()
+
+    def unflag(self, agent_id: str):
+        with self._lock:
+            if agent_id in self.states:
+                self.states[agent_id].flagged = False
+        self._dirty.set()
+
+    def escalate_flag(self, agent_id: str):
+        """Human reviewed the flag and confirmed the agent is broken — fire a full alert."""
+        with self._lock:
+            state = self.states.get(agent_id)
+            if not state or state.alerted or state.completed:
+                return
+            state.alerted = True
+            state.flagged = False
+            cost     = state.cumulative_cost
+            retries  = state.max_retry_count
+            progress = state.progress_score
+        self._fire_alert(agent_id, "escalated by human reviewer after flag", cost, retries, progress)
+        self._dirty.set()
+
+    def add_note(self, agent_id: str, note: str):
+        with self._lock:
+            if agent_id not in self.states:
+                self.states[agent_id] = _State(agent_id=agent_id)
+            self.states[agent_id].notes.append(
+                f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {note}"
+            )
+        self._dirty.set()
+
+    def dismiss_alert(self, alert_id: str):
+        with self._lock:
+            for a in self.alerts:
+                if a.id == alert_id:
+                    a.dismissed = True
+                    break
+        self._dirty.set()
+
+    def set_budget(self, agent_id: str, budget_usd: float):
+        """Set a hard cost cap for an agent. Watcher auto-pauses it when hit."""
+        with self._lock:
+            if agent_id not in self.states:
+                self.states[agent_id] = _State(agent_id=agent_id)
+            self.states[agent_id].budget_usd = budget_usd
+        self._dirty.set()
+
+    def set_thresholds(self, retry: int = None, cost: float = None, time: float = None):
+        """Update detection thresholds live — takes effect on the next event."""
+        with self._lock:
+            if retry is not None: self._retry_threshold = retry
+            if cost  is not None: self._cost_threshold  = cost
+            if time  is not None: self._time_threshold  = time
+        self._dirty.set()
+
     def mark_complete(self, agent_id: str):
         with self._lock:
             if agent_id in self.states:
                 self.states[agent_id].completed = True
+        self._dirty.set()
 
     def start_dashboard(self, port: int = 5050):
         import dashboard as _dash
@@ -181,8 +275,10 @@ class Watcher:
         print("\n--- SelfAudit Summary ---")
         with self._lock:
             for agent_id, state in sorted(self.states.items()):
-                status = ("DONE"    if state.completed
+                status = ("PAUSED"  if state.paused
+                          else "DONE"    if state.completed
                           else "ALERTED" if state.alerted
+                          else "FLAGGED" if state.flagged
                           else "RUNNING")
                 print(
                     f"  {agent_id}: {status} | "
@@ -201,6 +297,12 @@ class Watcher:
                 self.states[agent_id] = _State(agent_id=agent_id)
 
             state = self.states[agent_id]
+
+            # Don't process events for paused agents
+            if state.paused:
+                return
+            budget_hit = False
+
             cumulative = state.cumulative_cost + cost_usd
 
             if not success:
@@ -224,69 +326,146 @@ class Watcher:
                 completed=completed,
             )
             state.events.append(event)
-            self._evaluate(state, event, output)
 
-    def _evaluate(self, state: _State, event: _Event, output: str):
-        if state.alerted or state.completed:
-            return
-
-        # ── numeric divergence check ───────────────────────────────────────────
-        reasons = []
-
-        if state.max_retry_count >= self._retry_threshold and state.progress_score == 0:
-            reasons.append(
-                f"retried same action {state.max_retry_count}x with zero successful steps"
+            # budget cap — auto-pause and estimate savings
+            budget_hit = (
+                state.budget_usd is not None
+                and state.cumulative_cost >= state.budget_usd
+                and not state.paused and not state.completed
             )
-        if state.cumulative_cost >= self._cost_threshold and state.progress_score == 0:
-            reasons.append(f"spent ${state.cumulative_cost:.4f} with no progress")
+            if budget_hit:
+                state.paused = True
+                # estimate savings: what it would have spent at current rate for 1h more
+                with_savings = state.projected_cost_1h
+                self.cost_saved_usd += with_savings
 
-        if state.elapsed > self._time_threshold and state.progress_score == 0:
-            reasons.append(f"exceeded {self._time_threshold:.0f}s with no progress")
+            should_eval   = not state.alerted and not state.completed
+            snap_retries  = state.max_retry_count
+            snap_cost     = state.cumulative_cost
+            snap_progress = state.progress_score
+            snap_elapsed  = state.elapsed
+            snap_rate     = state.cost_rate_per_min
+            snap_proj     = state.projected_cost_1h
+            snap_budget   = state.budget_usd
+            run_peer      = (
+                self._peer_judge and output
+                and not state.peer_verdict
+                and not state.peer_judge_running
+                and should_eval
+            )
+            if run_peer:
+                state.peer_judge_running = True
 
-        if reasons:
-            self._fire_alert(state, "; ".join(reasons))
+        self._dirty.set()
+
+        if budget_hit:
+            print(f"\n[watcher] {agent_id} auto-paused — hit budget cap of ${snap_budget:.2f}")
+
+        if should_eval:
+            self._evaluate(agent_id, snap_retries, snap_cost,
+                           snap_progress, snap_elapsed)
+
+        if run_peer:
+            threading.Thread(
+                target=self._run_peer_judge,
+                args=(agent_id, output, snap_progress, snap_cost),
+                daemon=True,
+            ).start()
+
+    def _evaluate(self, agent_id, retries, cost, progress, elapsed):
+        with self._lock:
+            thresholds = (self._retry_threshold, self._cost_threshold, self._time_threshold)
+        retry_t, cost_t, time_t = thresholds
+
+        # ── clear breach: all signals point to stuck ───────────────────────────
+        clear_reasons = []
+        if retries >= retry_t and progress == 0:
+            clear_reasons.append(f"retried same action {retries}x with zero successful steps")
+        if cost >= cost_t and progress == 0:
+            clear_reasons.append(f"spent ${cost:.4f} with no progress")
+        if elapsed > time_t and progress == 0:
+            clear_reasons.append(f"exceeded {time_t:.0f}s with no progress")
+
+        if clear_reasons:
+            with self._lock:
+                state = self.states.get(agent_id)
+                if state and not state.alerted and not state.completed and not state.paused:
+                    state.alerted = True
+                    state.flagged = False  # escalate past flagged
+                else:
+                    return
+            self._fire_alert(agent_id, "; ".join(clear_reasons), cost, retries, progress)
             return
 
-        # ── peer judge (ambiguous zone only) ──────────────────────────────────
-        if self._peer_judge and output and not state.peer_verdict:
-            import peer_judge as pj
-            if pj.should_peer_judge(state.progress_score, state.max_retry_count,
-                                    state.cumulative_cost, self._cost_threshold):
-                verdict = pj.judge(
-                    agent_id=state.agent_id,
-                    task_description=self._task_description,
-                    recent_output=output,
-                    progress_score=state.progress_score,
-                    cumulative_cost=state.cumulative_cost,
-                )
-                state.peer_verdict = verdict
-                if not verdict.get("on_task", True) and verdict.get("confidence") == "high":
-                    self.peer_alerts.append({
-                        "agent_id":       state.agent_id,
-                        "reason":         verdict.get("reason", "off-task output detected"),
-                        "recommendation": verdict.get("recommendation", "Review agent output."),
-                        "time":           datetime.datetime.now().strftime("%H:%M:%S"),
-                    })
-                    print(f"\n[peer judge] {state.agent_id}: {verdict.get('reason')}")
+        # ── ambiguous zone: some progress but signals are elevated ─────────────
+        # Flag for human review instead of alerting outright.
+        ambiguous_reasons = []
+        if retries >= max(1, retry_t // 2) and progress > 0:
+            ambiguous_reasons.append(f"{retries} retries despite some progress — may be stuck on a sub-task")
+        if cost >= cost_t * 0.6 and progress > 0 and elapsed > time_t * 0.5:
+            ambiguous_reasons.append(f"${cost:.4f} spent with only {progress} step(s) — cost/progress ratio is high")
 
-    def _fire_alert(self, state: _State, reason: str):
-        state.alerted = True
-        from models import get_cheaper_alternatives, format_tradeoffs
-        alts = get_cheaper_alternatives("claude-opus-4-8", 5.00)
+        if ambiguous_reasons:
+            with self._lock:
+                state = self.states.get(agent_id)
+                if state and not state.flagged and not state.alerted and not state.completed and not state.paused:
+                    state.flagged = True
+                    flag_reason = "; ".join(ambiguous_reasons)
+                    state.notes.append(
+                        f"[{datetime.datetime.now().strftime('%H:%M:%S')}] "
+                        f"[watcher] needs review — {flag_reason}"
+                    )
+                else:
+                    return
+            self._dirty.set()
+            print(f"\n[watcher] {agent_id} flagged for review — {'; '.join(ambiguous_reasons)}")
+
+    def _fire_alert(self, agent_id, reason, cost, retries, progress):
         alert = Alert(
-            agent_id=state.agent_id,
+            agent_id=agent_id,
             reason=reason,
-            cost_usd=state.cumulative_cost,
-            retry_count=state.max_retry_count,
-            progress_score=state.progress_score,
+            cost_usd=cost,
+            retry_count=retries,
+            progress_score=progress,
             recommendation=(
-                f"Pause {state.agent_id} — ${state.cumulative_cost:.4f} spent, "
-                f"{state.progress_score} steps, {state.max_retry_count} retries.\n"
-                + format_tradeoffs(alts)
+                f"Pause {agent_id} — ${cost:.4f} spent, "
+                f"{progress} steps, {retries} retries.\n"
+                + _MODEL_TRADEOFFS_TEXT
             ),
         )
-        self.alerts.append(alert)
+        with self._lock:
+            self.alerts.append(alert)
+        self._dirty.set()
         self._on_alert(alert)
+
+    def _run_peer_judge(self, agent_id, output, progress, cost):
+        import peer_judge as pj
+        verdict = pj.judge(
+            agent_id=agent_id,
+            task_description=self._task_description,
+            recent_output=output,
+            progress_score=progress,
+            cumulative_cost=cost,
+        )
+        with self._lock:
+            state = self.states.get(agent_id)
+            if state:
+                state.peer_verdict = verdict
+                state.peer_judge_running = False
+                if not verdict.get("on_task", True) and verdict.get("confidence") == "high":
+                    state.flagged = True
+
+        if not verdict.get("on_task", True) and verdict.get("confidence") == "high":
+            entry = {
+                "agent_id":       agent_id,
+                "reason":         verdict.get("reason", "off-task output detected"),
+                "recommendation": verdict.get("recommendation", "Review agent output."),
+                "time":           datetime.datetime.now().strftime("%H:%M:%S"),
+            }
+            with self._lock:
+                self.peer_alerts.append(entry)
+            self._dirty.set()
+            print(f"\n[peer judge] {agent_id}: {verdict.get('reason')}")
 
     def _print_alert(self, alert: Alert):
         print(f"\n{'='*60}")
