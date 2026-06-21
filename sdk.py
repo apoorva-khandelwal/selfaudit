@@ -40,6 +40,46 @@ def _model_rec(model: Optional[str]) -> str:
     alts = get_cheaper_alternatives(model or "claude-opus-4-8", price)
     return format_tradeoffs(alts)
 
+
+def _build_recommendation(agent_id: str, model: Optional[str],
+                           cost: float, retries: int, progress: int,
+                           situation: str) -> str:
+    """Build context-aware recommendation based on what's actually wrong."""
+    m = next((x for x in MODELS if x["id"] == model), None)
+    price = m["input_cost_per_1m"] if m else 5.00
+    alts = get_cheaper_alternatives(model or "claude-opus-4-8", price)
+    model_label = model or "unknown model"
+
+    if situation == "zero_progress":
+        # Agent spent money and made zero progress — likely wrong approach entirely
+        action = (
+            f"Stop {agent_id} — ${cost:.4f} spent with {retries} retries and no successful steps.\n"
+            f"The agent is not making any progress on {model_label}. Options:\n"
+            f"  1. Fix the underlying issue (bad prompt, API error, logic bug) before retrying.\n"
+            f"  2. Switch to a cheaper model for debugging — don't burn money diagnosing on {model_label}.\n"
+        )
+    elif situation == "stuck_subtask":
+        # Agent made progress then got stuck on one sub-task
+        action = (
+            f"{agent_id} completed {progress} step(s) successfully but is now stuck "
+            f"({retries} retries, ${cost:.4f} spent).\n"
+            f"The successful steps are working on {model_label} — the problem is isolated to the failing sub-task.\n"
+            f"  1. Consider a cheaper model just for the failing sub-task instead of the full pipeline.\n"
+            f"  2. Or fix the sub-task logic and resume — the earlier steps don't need to re-run.\n"
+        )
+    elif situation == "high_cost_ratio":
+        # Making progress but spending too much per step
+        action = (
+            f"{agent_id} is making progress ({progress} step(s)) but spending ${cost:.4f} — "
+            f"cost per step is high on {model_label}.\n"
+            f"  1. Profile which steps consume the most tokens — likely a few expensive calls.\n"
+            f"  2. Switch those specific steps to a cheaper model; keep {model_label} for complex ones.\n"
+        )
+    else:
+        action = f"Review {agent_id} — ${cost:.4f} spent, {progress} steps, {retries} retries on {model_label}.\n"
+
+    return action + ("\n" + format_tradeoffs(alts) if alts else "")
+
 RETRY_ALERT_THRESHOLD    = 3
 COST_STALL_THRESHOLD_USD = 0.05
 EXPECTED_TASK_SECONDS    = 30.0
@@ -444,16 +484,15 @@ class Watcher:
     def _fire_alert(self, agent_id, reason, cost, retries, progress):
         with self._lock:
             model = self.states[agent_id].model if agent_id in self.states else None
+        situation = "zero_progress" if progress == 0 else "stuck_subtask"
         alert = Alert(
             agent_id=agent_id,
             reason=reason,
             cost_usd=cost,
             retry_count=retries,
             progress_score=progress,
-            recommendation=(
-                f"Pause {agent_id} — ${cost:.4f} spent, "
-                f"{progress} steps, {retries} retries.\n"
-                + _model_rec(model)
+            recommendation=_build_recommendation(
+                agent_id, model, cost, retries, progress, situation
             ),
         )
         with self._lock:

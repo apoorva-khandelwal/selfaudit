@@ -11,11 +11,20 @@ from flask import Flask, Response, render_template_string, request, jsonify
 from models import MODELS, get_cheaper_alternatives, format_tradeoffs
 
 
-def _model_rec(model):
-    m = next((x for x in MODELS if x["id"] == model), None)
-    price = m["input_cost_per_1m"] if m else 5.00
-    alts = get_cheaper_alternatives(model or "claude-opus-4-8", price)
-    return format_tradeoffs(alts)
+def _flag_rec(state):
+    from sdk import _build_recommendation
+    # pick situation from the watcher note
+    notes = [n for n in state.notes if "[watcher]" in n]
+    last = notes[-1] if notes else ""
+    if "cost/progress ratio" in last:
+        situation = "high_cost_ratio"
+    else:
+        situation = "stuck_subtask"
+    return _build_recommendation(
+        state.agent_id, state.model,
+        state.cumulative_cost, state.max_retry_count,
+        state.progress_score, situation,
+    )
 
 app = Flask(__name__)
 _watcher = None
@@ -573,7 +582,7 @@ def _snapshot(watcher):
         if state.flagged and not state.alerted:
             watcher_notes = [n for n in state.notes if "[watcher]" in n]
             reason = watcher_notes[-1].split("[watcher] ")[-1] if watcher_notes else "ambiguous signals detected"
-            rec = _model_rec(state.model)
+            rec = _flag_rec(state)
             flagged_list.append({
                 "agent_id":   agent_id,
                 "reason":     reason,
