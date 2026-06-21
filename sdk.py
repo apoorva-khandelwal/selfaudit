@@ -64,6 +64,7 @@ class _State:
     agent_id: str
     events: List[_Event] = field(default_factory=list)
     unique_successes: set = field(default_factory=set)
+    total_successes: int = 0
     retry_counts: Dict[str, int] = field(default_factory=dict)
     completed: bool = False
     alerted: bool = False
@@ -73,6 +74,7 @@ class _State:
     peer_verdict: Optional[dict] = None
     model: Optional[str] = None          # last model used by this agent
     budget_usd: Optional[float] = None   # hard cap; None = no cap
+    progress_mode: str = "unique"        # "unique" or "total"
     start_time: float = field(default_factory=time.time)
 
     @property
@@ -81,7 +83,7 @@ class _State:
 
     @property
     def progress_score(self) -> int:
-        return len(self.unique_successes)
+        return self.total_successes if self.progress_mode == "total" else len(self.unique_successes)
 
     @property
     def max_retry_count(self) -> int:
@@ -165,10 +167,10 @@ class Watcher:
                  cost_threshold:   float = COST_STALL_THRESHOLD_USD,
                  time_threshold:   float = EXPECTED_TASK_SECONDS,
                  task_description: str   = "",
+                 progress_mode:    str   = "unique",
                  on_alert=None):
         self.states: Dict[str, _State] = {}
         self.alerts: List[Alert] = []
-        self.peer_alerts: List[dict] = []
         self.cost_saved_usd: float = 0.0  # estimated savings from pausing alerted agents
         self._lock             = threading.Lock()
         self._dirty            = threading.Event()
@@ -176,6 +178,7 @@ class Watcher:
         self._cost_threshold   = cost_threshold
         self._time_threshold   = time_threshold
         self._task_description = task_description
+        self._progress_mode    = progress_mode
         self._on_alert         = on_alert or self._print_alert
 
     # ── public control API ─────────────────────────────────────────────────────
@@ -233,7 +236,7 @@ class Watcher:
     def add_note(self, agent_id: str, note: str):
         with self._lock:
             if agent_id not in self.states:
-                self.states[agent_id] = _State(agent_id=agent_id)
+                self.states[agent_id] = self._new_state(agent_id)
             self.states[agent_id].notes.append(
                 f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {note}"
             )
@@ -251,7 +254,7 @@ class Watcher:
         """Set a hard cost cap for an agent. Watcher auto-pauses it when hit."""
         with self._lock:
             if agent_id not in self.states:
-                self.states[agent_id] = _State(agent_id=agent_id)
+                self.states[agent_id] = self._new_state(agent_id)
             self.states[agent_id].budget_usd = budget_usd
         self._dirty.set()
 
@@ -298,10 +301,13 @@ class Watcher:
 
     # ── internals ──────────────────────────────────────────────────────────────
 
+    def _new_state(self, agent_id: str) -> "_State":
+        return _State(agent_id=agent_id, progress_mode=self._progress_mode)
+
     def _record(self, agent_id, action, cost_usd, success, completed, output):
         with self._lock:
             if agent_id not in self.states:
-                self.states[agent_id] = _State(agent_id=agent_id)
+                self.states[agent_id] = self._new_state(agent_id)
 
             state = self.states[agent_id]
 
@@ -316,6 +322,7 @@ class Watcher:
                 state.retry_counts[action] = state.retry_counts.get(action, 0) + 1
             else:
                 state.retry_counts.pop(action, None)
+                state.total_successes += 1
                 if not completed:
                     state.unique_successes.add(action)
 

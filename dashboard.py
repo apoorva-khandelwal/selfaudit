@@ -353,7 +353,7 @@ HTML = """
       </div>
       <div class="metrics">
         <div class="metric"><label>cost</label><div class="val${costCls}">$${a.cost}</div></div>
-        <div class="metric"><label>steps</label><div class="val${progCls}">${a.progress}</div></div>
+        <div class="metric"><label>steps <span style="font-size:8px;color:var(--muted)">${a.progress_mode==='total'?'total':'uniq'}</span></label><div class="val${progCls}">${a.progress}</div></div>
         <div class="metric"><label>retries</label><div class="val${retryCls}">${a.retries}</div></div>
         <div class="metric"><label>elapsed</label><div class="val">${a.elapsed}s</div></div>
       </div>
@@ -545,6 +545,7 @@ def _snapshot(watcher):
             "proj_1h":        f"{state.projected_cost_1h:.4f}",
             "budget":         f"{state.budget_usd:.2f}" if state.budget_usd else None,
             "model":          state.model,
+            "progress_mode":  state.progress_mode,
         })
 
     import datetime
