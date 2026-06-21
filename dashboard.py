@@ -315,6 +315,10 @@ HTML = """
       <div class="val" id="h-running">0</div>
     </div>
     <div class="stat">
+      <label>redis memory</label>
+      <div class="val good" id="h-memory">0 cases</div>
+    </div>
+    <div class="stat">
       <label>last update</label>
       <div class="val" id="h-time">—</div>
     </div>
@@ -359,6 +363,7 @@ HTML = """
     document.getElementById('h-alerts').textContent  = data.alert_count;
     document.getElementById('h-done').textContent    = data.done_count;
     document.getElementById('h-running').textContent = data.running_count;
+    document.getElementById('h-memory').textContent  = data.memory_count + ' cases';
     document.getElementById('h-time').textContent    = new Date().toLocaleTimeString();
   }
 
@@ -522,6 +527,13 @@ def _snapshot(watcher):
             "type":           "peer",
         })
 
+    try:
+        from peer_judge import _redis_client, _INDEX_KEY
+        r = _redis_client()
+        memory_count = int(r.scard(_INDEX_KEY)) if r else 0
+    except Exception:
+        memory_count = 0
+
     return {
         "agents":        agents,
         "alerts":        all_alerts,
@@ -529,6 +541,7 @@ def _snapshot(watcher):
         "alert_count":   alert_count,
         "done_count":    done_count,
         "running_count": running_count,
+        "memory_count":  memory_count,
     }
 
 
