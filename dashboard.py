@@ -454,6 +454,7 @@ HTML = """
   function renderAlertLog(alerts) {
     const log = document.getElementById('alert-log');
     if (!alerts||!alerts.length) { log.innerHTML='<div class="empty-log">no alerts yet</div>'; return; }
+    const openPanels = new Set([...log.querySelectorAll('.rec-panel.open')].map(el => el.id));
     log.innerHTML = [...alerts].reverse().map(a => `
       <div class="alert-entry ${a.dismissed?'dismissed':''}">
         <div class="alert-meta">
@@ -468,6 +469,12 @@ HTML = """
         </div>
         ${a.recommendation ? `<div class="rec-panel" id="rec-${a.id}"><div class="alert-rec">${renderRec(a.recommendation)}</div></div>` : ''}
       </div>`).join('');
+    openPanels.forEach(id => {
+      const panel = document.getElementById(id);
+      const btn   = document.getElementById('rec-btn-' + id.replace('rec-', ''));
+      if (panel) { panel.classList.add('open'); }
+      if (btn)   { btn.classList.add('open'); btn.textContent = '💡 Hide'; }
+    });
   }
 
   function toggleRec(alertId) {
@@ -492,12 +499,21 @@ HTML = """
       html += '<div style="font-size:10px;color:var(--muted);margin-bottom:4px;letter-spacing:.06em;text-transform:uppercase;margin-top:10px">cheaper alternatives</div>';
       html += '<div style="display:flex;flex-direction:column;gap:4px">';
       rec.alternatives.forEach(a => {
-        html += `<div style="display:flex;align-items:baseline;gap:8px;font-size:11px">
-          <span style="color:#ccc;font-weight:600;min-width:160px">${a.id}</span>
-          <span style="color:var(--green)">$${a.input_cost_per_1m.toFixed(2)}/$1M in</span>
-          <span style="color:var(--muted)">· $${a.output_cost_per_1m.toFixed(2)}/$1M out</span>
-          <span style="color:var(--muted)">· ${a.context_window_k}K ctx</span>
-          <span style="color:#555">— ${a.notes}</span>
+        html += `<div style="font-size:11px;padding:6px 0;border-bottom:1px solid var(--border)">
+          <div style="display:flex;align-items:baseline;gap:8px">
+            <span style="color:#ccc;font-weight:600;min-width:160px">${a.id}</span>
+            <span style="color:var(--green)">$${a.input_cost_per_1m.toFixed(2)}/$1M in</span>
+            <span style="color:var(--muted)">· $${a.output_cost_per_1m.toFixed(2)}/$1M out</span>
+            <span style="color:var(--muted)">· ${a.context_window_k}K ctx</span>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:3px;padding-left:2px">
+            <span style="color:var(--green);min-width:40px">+ pro</span>
+            <span style="color:#888">${a.notes}</span>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:2px;padding-left:2px">
+            <span style="color:var(--orange);min-width:40px">− con</span>
+            <span style="color:#888">${a.tradeoff || 'No major downside noted.'}</span>
+          </div>
         </div>`;
       });
       html += '</div>';

@@ -400,6 +400,11 @@ class Watcher:
             pass
 
     def start_dashboard(self, port: int = 5050):
+        try:
+            import redis_store as _rs
+            _rs.clear_session()
+        except Exception:
+            pass
         import dashboard as _dash
         _dash.start(self, port=port)
 
@@ -582,10 +587,14 @@ class Watcher:
             f"Given its current state and thresholds, decide if it needs intervention.\n\n"
             f"State: {_json.dumps(summary)}\n"
             f"Thresholds: {_json.dumps(thresholds)}\n\n"
+            f"Rules:\n"
+            f"- ALERT if progress_steps == 0 and retries or cost exceed thresholds. Clearly stuck with nothing to show.\n"
+            f"- FLAG if progress_steps > 0 but retries or cost are elevated. Made some progress but may be stuck on a sub-task. Human should decide.\n"
+            f"- OK if everything is within normal bounds.\n\n"
             f"Reply with exactly one of:\n"
-            f"ALERT: <one-line reason>  (clearly stuck, burning cost with no output)\n"
-            f"FLAG: <one-line reason>   (ambiguous, needs human review)\n"
-            f"OK                        (within normal bounds)"
+            f"ALERT: <one-line reason>\n"
+            f"FLAG: <one-line reason>\n"
+            f"OK"
         )
 
         try:
@@ -608,16 +617,21 @@ class Watcher:
 
         if text.upper().startswith("ALERT"):
             reason = text.split(":", 1)[1].strip() if ":" in text else text
-            with self._lock:
-                state = self.states.get(agent_id)
-                if not state or state.alerted or state.completed or state.paused:
-                    return
-                state.alerted = True
-                state.flagged = False
-            self._fire_alert(agent_id, reason, cost, retries, progress)
-            print(f"\n[watcher] ALERT: {agent_id} — {reason}")
+            if progress > 0:
+                # agent made progress — not a clear breach, flag for human review
+                text = f"FLAG: {reason}"
+            else:
+                with self._lock:
+                    state = self.states.get(agent_id)
+                    if not state or state.alerted or state.completed or state.paused:
+                        return
+                    state.alerted = True
+                    state.flagged = False
+                self._fire_alert(agent_id, reason, cost, retries, progress)
+                print(f"\n[watcher] ALERT: {agent_id} — {reason}")
+                return
 
-        elif text.upper().startswith("FLAG"):
+        if text.upper().startswith("FLAG"):
             reason = text.split(":", 1)[1].strip() if ":" in text else text
             with self._lock:
                 state = self.states.get(agent_id)

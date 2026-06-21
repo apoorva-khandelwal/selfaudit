@@ -50,6 +50,24 @@ def _client():
         return None
 
 
+def clear_session() -> None:
+    """Delete all keys from the previous session so stale state doesn't bleed through."""
+    r = _client()
+    if not r:
+        return
+    try:
+        pipe = r.pipeline()
+        for aid_bytes in r.smembers(_KEY_AGENTS):
+            pipe.delete(_KEY_AGENT + aid_bytes.decode())
+        pipe.delete(_KEY_AGENTS)
+        pipe.delete(_KEY_ALERTS)
+        pipe.delete(_KEY_FLAGGED)
+        pipe.delete(_KEY_STATS)
+        pipe.execute()
+    except Exception:
+        pass
+
+
 def push_snapshot(snapshot: dict) -> None:
     """
     Write dashboard state to Redis using typed data structures.
