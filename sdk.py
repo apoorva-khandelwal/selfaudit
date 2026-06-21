@@ -43,42 +43,36 @@ def _model_rec(model: Optional[str]) -> str:
 
 def _build_recommendation(agent_id: str, model: Optional[str],
                            cost: float, retries: int, progress: int,
-                           situation: str) -> str:
-    """Build context-aware recommendation based on what's actually wrong."""
+                           situation: str) -> dict:
+    """Build context-aware recommendation. Returns a dict for structured rendering."""
     m = next((x for x in MODELS if x["id"] == model), None)
     price = m["input_cost_per_1m"] if m else 5.00
     alts = get_cheaper_alternatives(model or "claude-opus-4-8", price)
     model_label = model or "unknown model"
 
     if situation == "zero_progress":
-        # Agent spent money and made zero progress — likely wrong approach entirely
-        action = (
-            f"Stop {agent_id} — ${cost:.4f} spent with {retries} retries and no successful steps.\n"
-            f"The agent is not making any progress on {model_label}. Options:\n"
-            f"  1. Fix the underlying issue (bad prompt, API error, logic bug) before retrying.\n"
-            f"  2. Switch to a cheaper model for debugging — don't burn money diagnosing on {model_label}.\n"
-        )
+        headline = f"No progress after {retries} retries — ${cost:.4f} spent on {model_label}"
+        steps = [
+            "Fix the underlying issue first (bad prompt, API error, logic bug) — retrying a broken agent wastes money.",
+            f"Debug on a cheaper model. Don't spend {model_label} rates diagnosing the problem.",
+        ]
     elif situation == "stuck_subtask":
-        # Agent made progress then got stuck on one sub-task
-        action = (
-            f"{agent_id} completed {progress} step(s) successfully but is now stuck "
-            f"({retries} retries, ${cost:.4f} spent).\n"
-            f"The successful steps are working on {model_label} — the problem is isolated to the failing sub-task.\n"
-            f"  1. Consider a cheaper model just for the failing sub-task instead of the full pipeline.\n"
-            f"  2. Or fix the sub-task logic and resume — the earlier steps don't need to re-run.\n"
-        )
+        headline = f"{progress} step(s) succeeded, then got stuck — {retries} retries on the same sub-task"
+        steps = [
+            "The problem is isolated. Earlier steps don't need to re-run — only the failing sub-task needs fixing.",
+            f"Consider a cheaper model just for the failing sub-task; keep {model_label} for the steps that need it.",
+        ]
     elif situation == "high_cost_ratio":
-        # Making progress but spending too much per step
-        action = (
-            f"{agent_id} is making progress ({progress} step(s)) but spending ${cost:.4f} — "
-            f"cost per step is high on {model_label}.\n"
-            f"  1. Profile which steps consume the most tokens — likely a few expensive calls.\n"
-            f"  2. Switch those specific steps to a cheaper model; keep {model_label} for complex ones.\n"
-        )
+        headline = f"High cost per step — ${cost:.4f} for {progress} step(s) on {model_label}"
+        steps = [
+            "Profile which steps consume the most tokens — usually a small number of calls drive most of the cost.",
+            f"Route cheap/repetitive steps to a cheaper model; reserve {model_label} for the complex ones.",
+        ]
     else:
-        action = f"Review {agent_id} — ${cost:.4f} spent, {progress} steps, {retries} retries on {model_label}.\n"
+        headline = f"Review {agent_id} — ${cost:.4f}, {progress} steps, {retries} retries on {model_label}"
+        steps = []
 
-    return action + ("\n" + format_tradeoffs(alts) if alts else "")
+    return {"headline": headline, "steps": steps, "alternatives": alts}
 
 RETRY_ALERT_THRESHOLD    = 3
 COST_STALL_THRESHOLD_USD = 0.05
@@ -154,7 +148,7 @@ class Alert:
     cost_usd: float
     retry_count: int
     progress_score: int
-    recommendation: str
+    recommendation: dict
     id: str = field(default_factory=lambda: str(time.time()))
     timestamp: float = field(default_factory=time.time)
     dismissed: bool = False
@@ -501,12 +495,13 @@ class Watcher:
         self._on_alert(alert)
 
     def _print_alert(self, alert: Alert):
+        rec = alert.recommendation
         print(f"\n{'='*60}")
         print(f"  ALERT — {alert.agent_id}")
-        print(f"  Reason      : {alert.reason}")
-        print(f"  Cost so far : ${alert.cost_usd:.4f}")
-        print(f"  Retries     : {alert.retry_count}")
-        print(f"  Progress    : {alert.progress_score} steps")
-        for line in alert.recommendation.splitlines():
-            print(f"  {line}")
+        print(f"  Reason  : {alert.reason}")
+        print(f"  {rec.get('headline', '')}")
+        for i, step in enumerate(rec.get("steps", []), 1):
+            print(f"  {i}. {step}")
+        for a in rec.get("alternatives", []):
+            print(f"     • {a['id']} — ${a['input_cost_per_1m']:.2f}/$1M in")
         print(f"{'='*60}\n")

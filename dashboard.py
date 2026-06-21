@@ -406,9 +406,35 @@ HTML = """
           <span class="alert-time">${a.time}</span>
         </div>
         <div class="alert-reason">${a.reason}</div>
-        <div class="alert-rec">${a.recommendation.replace(/\\n/g,'<br>')}</div>
+        <div class="alert-rec">${renderRec(a.recommendation)}</div>
         ${!a.dismissed && a.id ? `<button class="btn-dismiss" onclick="dismissAlert('${a.id}')">Dismiss</button>` : ''}
       </div>`).join('');
+  }
+
+  function renderRec(rec) {
+    if (!rec || typeof rec === 'string') return rec || '';
+    let html = '';
+    if (rec.headline) html += `<div style="color:#ccc;font-weight:600;margin-bottom:6px">${rec.headline}</div>`;
+    if (rec.steps && rec.steps.length) {
+      html += '<ol style="margin:0 0 10px 16px;padding:0;display:flex;flex-direction:column;gap:4px">';
+      rec.steps.forEach(s => { html += `<li style="color:#aaa">${s}</li>`; });
+      html += '</ol>';
+    }
+    if (rec.alternatives && rec.alternatives.length) {
+      html += '<div style="font-size:10px;color:var(--muted);margin-bottom:4px;letter-spacing:.06em;text-transform:uppercase">cheaper alternatives</div>';
+      html += '<div style="display:flex;flex-direction:column;gap:4px">';
+      rec.alternatives.forEach(a => {
+        html += `<div style="display:flex;align-items:baseline;gap:8px;font-size:11px">
+          <span style="color:#ccc;font-weight:600;min-width:160px">${a.id}</span>
+          <span style="color:var(--green)">$${a.input_cost_per_1m.toFixed(2)}/$1M in</span>
+          <span style="color:var(--muted)">· $${a.output_cost_per_1m.toFixed(2)}/$1M out</span>
+          <span style="color:var(--muted)">· ${a.context_window_k}K ctx</span>
+          <span style="color:#555">— ${a.notes}</span>
+        </div>`;
+      });
+      html += '</div>';
+    }
+    return html;
   }
 
   function api(action, agentId) {
