@@ -819,20 +819,11 @@ def stream():
 
         if _watcher:
             # local mode: use threading.Event
-            # NEW: every snapshot pushed to the browser is also pushed to
-            # Redis, so a viewer-mode dashboard on another machine sees
-            # the same live data via redis_store.get_snapshot()/subscribe().
             while True:
                 changed = _watcher._dirty.wait(timeout=2.0)
                 if changed and _watcher.states:
                     _watcher._dirty.clear()
-                    snap = _snapshot(_watcher)
-                    try:
-                        import redis_store as _rs
-                        _rs.push_snapshot(snap)
-                    except Exception:
-                        pass
-                    yield f"data: {json.dumps(snap)}\n\n"
+                    yield f"data: {json.dumps(_snapshot(_watcher))}\n\n"
         else:
             # viewer mode (friend's machine): subscribe to Redis pub/sub
             try:
